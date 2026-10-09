@@ -99,6 +99,10 @@ through its web dashboard, which works fine in a phone browser:
 3. `render.yaml` supplies the rest. When it goes live you get a URL like
    `https://domino.onrender.com` — send that to the other three players.
 
+The blueprint does not pin a region, so it uses Render's default. Dominoes is
+turn-based, so region makes no perceptible difference; change it in the
+dashboard afterwards if you want.
+
 On the free plan the service sleeps after about 15 minutes with no traffic and
 takes roughly a minute to wake, so whoever opens the link first after a quiet
 spell waits for that; the page says so while it happens. Once a game is going,

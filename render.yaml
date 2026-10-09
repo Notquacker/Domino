@@ -14,10 +14,10 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    # Closest Render region to the Caribbean. Change to oregon, frankfurt or
-    # singapore if your players are elsewhere — lower latency is nicer, and
-    # for a turn-based game any of them is perfectly playable.
-    region: ohio
+    # No region set, so this uses Render's default. Dominoes is turn-based, so
+    # the difference between regions is imperceptible; pick a closer one in the
+    # dashboard afterwards if you like, rather than guessing a value here that
+    # could fail the whole blueprint.
     healthCheckPath: /healthz
     # Render supplies PORT itself and the server reads it; nothing to set here.
     # To turn on accounts later, add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
