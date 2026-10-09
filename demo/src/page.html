@@ -1,0 +1,200 @@
+<title>Domino Curaçao</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Karla:ital,wght@0,400;0,600;0,700;1,400&display=swap">
+<style>
+/* Layout: a felt table filling the screen — opponents along the top, the chain
+   scrolling through the middle, your hand along the bottom edge.
+   Committed single theme on purpose: this is a physical table, not a document. */
+:root {
+  --felt:      #10231b;
+  --felt-lift: #17342a;
+  --rail:      #0a1710;
+  --bone:      #f5f0e3;
+  --bone-edge: #cfc5b0;
+  --ink:       #14201a;
+  --text:      #e9efe9;
+  --muted:     #90a498;
+  --gold:      #e3b45b;
+  --team-a:    #74c6f2;
+  --team-b:    #f09a74;
+  --bad:       #e2685f;
+  --display: "Alfa Slab One", Georgia, serif;
+  --body: "Karla", ui-sans-serif, system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -10%, var(--felt-lift), var(--felt) 68%) fixed,
+    var(--felt);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+#app { height: 100%; display: flex; flex-direction: column; }
+button {
+  font: inherit; font-weight: 700; font-family: var(--body);
+  color: var(--ink); background: var(--bone);
+  border: 0; border-radius: 10px; padding: 12px 18px; cursor: pointer;
+  transition: transform .08s ease, filter .15s ease;
+}
+button:hover:not(:disabled) { filter: brightness(1.07); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 3px solid var(--gold); outline-offset: 2px;
+}
+button.gold { background: var(--gold); }
+button.ghost { background: transparent; color: var(--text); border: 1px solid #ffffff33; }
+button.small { padding: 8px 13px; font-size: 13px; border-radius: 8px; }
+input, select {
+  font: inherit; font-family: var(--body); color: var(--text);
+  background: #00000040; border: 1px solid #ffffff2e;
+  border-radius: 9px; padding: 10px 12px; width: 100%;
+}
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------- setup ---------- */
+.sheetwrap { margin: auto; width: 100%; max-width: 440px; padding-block: 22px; padding-left: 16px; padding-right: 16px; }
+.wordmark { text-align: center; margin-bottom: 22px; }
+.wordmark h1 {
+  font-family: var(--display); font-weight: 400;
+  font-size: clamp(30px, 10vw, 40px); margin: 0; letter-spacing: .02em;
+  color: var(--bone); text-wrap: balance;
+}
+.wordmark p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.panel {
+  background: #00000036; border: 1px solid #ffffff1c;
+  border-radius: 13px; padding: 17px;
+}
+.panel + .panel { margin-top: 13px; }
+.panel h2 {
+  margin: 0 0 12px; font-size: 12px; letter-spacing: .11em;
+  text-transform: uppercase; color: var(--muted); font-weight: 700;
+}
+.grid { display: grid; gap: 10px; }
+.seatfield { display: flex; align-items: center; gap: 10px; }
+.chip {
+  flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; padding: 4px 8px; border-radius: 999px; min-width: 62px; text-align: center;
+}
+.chip.a { background: #74c6f230; color: var(--team-a); }
+.chip.b { background: #f09a7430; color: var(--team-b); }
+.optrow { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.optrow .grow { flex: 1; min-width: 0; }
+.optrow input[type=checkbox] { width: auto; flex: none; accent-color: var(--gold); }
+.optrow select { width: auto; }
+.note { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+details.rules summary {
+  cursor: pointer; color: var(--muted); font-size: 13px; list-style: none; padding: 2px 0;
+}
+details.rules summary::-webkit-details-marker { display: none; }
+details.rules summary::before { content: "▸ "; }
+details.rules[open] summary::before { content: "▾ "; }
+.ruleslist { margin: 10px 0 0; padding-left: 18px; font-size: 13.5px; color: #cdd9d1; }
+.ruleslist li { margin-bottom: 5px; }
+
+/* ---------- table ---------- */
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; background: #00000044; border-bottom: 1px solid #ffffff14;
+}
+.scoreline { display: flex; align-items: baseline; gap: 7px; }
+.scoreline b { font-family: var(--display); font-weight: 400; font-size: 21px; }
+.scoreline .a { color: var(--team-a); }
+.scoreline .b { color: var(--team-b); }
+.scoreline small { color: var(--muted); font-size: 12px; }
+.topbar .right { margin-left: auto; text-align: right; font-size: 12px; color: var(--muted); }
+
+.opps { display: flex; gap: 8px; padding: 10px 16px 2px; overflow-x: auto; scrollbar-width: none; }
+.opps::-webkit-scrollbar { display: none; }
+.opp {
+  flex: 1 0 auto; min-width: 108px; padding: 8px 10px;
+  border-radius: 10px; background: #00000030; border: 1px solid #ffffff16;
+}
+.opp.turn { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+.opp.a { border-left: 3px solid var(--team-a); }
+.opp.b { border-left: 3px solid var(--team-b); }
+.opp .nm { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opp .sub { font-size: 11.5px; color: var(--muted); }
+.backs { display: flex; gap: 2px; margin-top: 5px; }
+.back { width: 7px; height: 13px; border-radius: 2px; background: #ffffff3d; }
+
+.table { flex: 1; display: flex; align-items: center; overflow-x: auto; overflow-y: hidden; min-height: 132px; }
+.table::-webkit-scrollbar { height: 6px; }
+.table::-webkit-scrollbar-thumb { background: #ffffff26; border-radius: 3px; }
+.chain { display: flex; align-items: center; gap: 3px; margin: auto; padding: 0 16px; }
+.chain .blank { color: var(--muted); font-size: 14px; white-space: nowrap; }
+.endslot {
+  flex: none; width: 34px; height: 56px; padding: 0;
+  border: 2px dashed #ffffff38; border-radius: 8px; background: transparent;
+  color: var(--muted); display: grid; place-items: center;
+  font-size: 17px; font-weight: 700; font-family: var(--body);
+}
+.endslot.live { border-color: var(--gold); color: var(--gold); background: #e3b45b22; }
+
+.status { text-align: center; padding: 7px 16px; font-size: 14px; min-height: 24px; }
+.status .me { color: var(--gold); font-weight: 700; }
+
+.handzone { background: #00000052; border-top: 1px solid #ffffff1c; padding: 10px 0 12px; }
+.hand { display: flex; gap: 6px; padding: 0 16px 4px; overflow-x: auto; align-items: flex-end; scrollbar-width: none; }
+.hand::-webkit-scrollbar { display: none; }
+.handbar { display: flex; gap: 8px; justify-content: center; align-items: center; padding: 8px 16px 0; flex-wrap: wrap; }
+.handbar .hint { color: var(--muted); font-size: 13px; }
+
+/* ---------- tiles ---------- */
+.tile {
+  flex: none; background: linear-gradient(168deg, #fffdf6, var(--bone));
+  border: 1px solid var(--bone-edge); border-radius: 7px;
+  box-shadow: 0 2px 5px #0007, inset 0 -2px 0 #00000012;
+  display: grid; padding: 3px; gap: 2px;
+}
+.tile.h { width: 76px; height: 39px; grid-template-columns: 1fr 1fr; }
+.tile.v { width: 39px; height: 76px; grid-template-rows: 1fr 1fr; }
+.tile.h .half + .half { border-left: 1px solid #00000030; }
+.tile.v .half + .half { border-top: 1px solid #00000030; }
+.half { display: grid; grid-template: repeat(3,1fr)/repeat(3,1fr); gap: 1px; padding: 2px; place-items: center; }
+.pip { width: 100%; aspect-ratio: 1; border-radius: 50%; background: var(--ink); max-width: 7px; }
+.tile.inhand { cursor: pointer; transition: transform .1s ease, box-shadow .1s ease; }
+.tile.inhand.dead { opacity: .4; filter: grayscale(.6); cursor: default; }
+.tile.inhand.playable:hover { transform: translateY(-4px); }
+.tile.inhand.sel { transform: translateY(-9px); box-shadow: 0 0 0 2px var(--gold), 0 6px 13px #0009; }
+
+/* ---------- overlays ---------- */
+.overlay {
+  position: fixed; inset: 0; background: #000000b3;
+  display: grid; place-items: center; padding: 18px; z-index: 20;
+}
+.card {
+  background: var(--felt-lift); border: 1px solid #ffffff26; border-radius: 15px;
+  padding: 24px; width: 100%; max-width: 390px; text-align: center;
+}
+.card h2 { margin: 0 0 4px; font-size: 20px; font-family: var(--body); font-weight: 700; text-wrap: balance; }
+.card .big { font-family: var(--display); font-weight: 400; font-size: 38px; color: var(--gold); margin: 10px 0 4px; }
+.card p { color: var(--muted); margin: 7px 0; font-size: 14px; }
+.card .actions { margin-top: 17px; display: grid; gap: 9px; }
+.ledger { display: grid; gap: 5px; margin: 15px 0 5px; font-size: 13.5px; text-align: left; }
+.ledger div { display: flex; justify-content: space-between; gap: 10px; }
+.ledger .k { color: var(--muted); }
+.handoff .big { font-size: 27px; color: var(--bone); margin-bottom: 2px; }
+.badge {
+  display: inline-block; font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+  font-weight: 700; padding: 4px 9px; border-radius: 999px; margin-bottom: 8px;
+}
+.badge.a { background: #74c6f230; color: var(--team-a); }
+.badge.b { background: #f09a7430; color: var(--team-b); }
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+@media (min-width: 620px) {
+  .tile.h { width: 88px; height: 45px; } .tile.v { width: 45px; height: 88px; }
+  .pip { max-width: 9px; } .endslot { width: 40px; height: 64px; }
+}
+</style>
+<div id="app"></div>

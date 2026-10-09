@@ -64,6 +64,22 @@ npm test           # rules unit tests + a full end-to-end match over WebSockets
 npm run typecheck
 ```
 
+## Try it without a server
+
+```bash
+npm run build:demo        # -> demo/dist/index.html, open it in a browser
+```
+
+One static file: four players, two teams, one device, with a hand-off screen
+between turns. It embeds the real rules engine — `scripts/build-demo.mjs`
+bundles the same compiled `shared/` the server imports — so it is the quickest
+way to check the house rules match how you play. It is not the multiplayer
+game: there is no network and no hidden state.
+
+Pushing to the default branch publishes it to GitHub Pages
+(`.github/workflows/pages.yml`). Pages serves static files only, so it can host
+this demo but never the real game, which needs a Node process and WebSockets.
+
 ## Deploying
 
 The server serves the built client itself, so one process is the whole app.

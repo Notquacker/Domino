@@ -19,10 +19,12 @@
     "start": "node server/dist/index.js",
     "typecheck": "tsc -p shared && tsc -p server && tsc --noEmit -p client && tsc --noEmit -p shared/test && tsc --noEmit -p server/test",
     "test:rules": "npm run build:shared && node --test shared/test/rules.test.ts",
-    "verify:supabase": "npm run build:server && node scripts/verify-supabase.mjs"
+    "verify:supabase": "npm run build:server && node scripts/verify-supabase.mjs",
+    "build:demo": "npm run build:shared && node scripts/build-demo.mjs"
   },
   "devDependencies": {
     "concurrently": "9.1.2",
+    "esbuild": "0.25.12",
     "typescript": "5.7.3",
     "vite": "6.4.4"
   }
