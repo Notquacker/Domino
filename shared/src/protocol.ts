@@ -44,9 +44,16 @@ export interface PlayerView {
   /** Epoch ms by which the player on turn must move, or null if untimed. */
   readonly turnDeadline: number | null;
   readonly spectators: number;
+  /** True once the server has verified a Supabase token for this connection. */
+  readonly authed: boolean;
 }
 
 export type ClientMessage =
+  /**
+   * Present a Supabase access token. Optional: without it the player is a
+   * guest, which works exactly as before but earns no stats.
+   */
+  | { readonly t: 'auth'; readonly jwt: string }
   | { readonly t: 'create'; readonly name: string; readonly rules?: Partial<HouseRules> }
   | { readonly t: 'join'; readonly code: string; readonly name: string }
   | { readonly t: 'resume'; readonly code: string; readonly token: string }
@@ -70,6 +77,7 @@ export type ServerMessage =
   | { readonly t: 'state'; readonly view: PlayerView }
   | { readonly t: 'chat'; readonly from: string; readonly text: string; readonly at: number }
   | { readonly t: 'error'; readonly message: string }
+  | { readonly t: 'authed'; readonly ok: boolean; readonly anonymous: boolean }
   | { readonly t: 'pong' };
 
 export const TEAM_NAMES: readonly [string, string] = ['Team A', 'Team B'];

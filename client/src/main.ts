@@ -9,9 +9,22 @@
 import type { End, HouseRules, PlayerView, Seat, ServerMessage, TileId } from '@domino/shared';
 import { TEAM_NAMES, teamOf } from '@domino/shared';
 import { Net } from './net.js';
+import {
+  type Account,
+  type Stats,
+  accountsEnabled,
+  accessToken,
+  claimAccount,
+  currentAccount,
+  ensureSession,
+  fetchStats,
+} from './auth.js';
 import { boardTile, el, handTile, tileBacks } from './tiles.js';
 
 const root = document.getElementById('app') as HTMLElement;
+
+/** How long to wait on Supabase before falling back to guest play. */
+const AUTH_TIMEOUT_MS = 4000;
 
 const STORE = {
   name: 'domino.name',
@@ -60,6 +73,15 @@ let name = recall(STORE.name);
 let formCode = new URL(location.href).searchParams.get('code')?.toUpperCase() ?? '';
 let lastBoard: readonly string[] = [];
 let tableScroll = 0;
+let account: Account | null = null;
+let stats: Stats | null = null;
+/** 'unavailable' means Supabase is configured but we could not reach it. */
+let accountState: 'pending' | 'ready' | 'unavailable' = 'pending';
+/** Reset on every connect: the token must be presented once per socket. */
+let authSent = false;
+let claimNotice = '';
+
+let lastPhase: string | null = null;
 
 const net = new Net(onMessage, onStatus, onReady);
 
@@ -68,17 +90,55 @@ function onStatus(up: boolean): void {
   render();
 }
 
+/**
+ * Present the Supabase token, once per connection and before anything else, so
+ * the room the server builds for us is attached to the right account. A guest
+ * has no token and simply skips this.
+ */
+/** Give up on a promise after `ms` and carry on without it. */
+function withTimeout<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<T>((resolve) => window.setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
+async function ensureAuthSent(): Promise<void> {
+  if (!accountsEnabled || authSent) return;
+  // Signing in must never hold up a game. If Supabase is slow or unreachable,
+  // we play on as a guest rather than leaving the player staring at a button.
+  await withTimeout(ensureSession(name), AUTH_TIMEOUT_MS, undefined);
+  const jwt = await withTimeout(accessToken(), AUTH_TIMEOUT_MS, null);
+  if (jwt !== null && !authSent) {
+    net.send({ t: 'auth', jwt });
+    authSent = true;
+  }
+}
+
 /** Runs on every (re)connect: resume a seat if we hold a token, else idle. */
 function onReady(): void {
-  const token = recall(STORE.token);
-  const code = recall(STORE.code);
-  if (token && code) {
-    net.send({ t: 'resume', code, token });
-  } else if (intent.kind === 'create') {
-    net.send({ t: 'create', name, rules: intent.rules });
-  } else if (intent.kind === 'join') {
-    net.send({ t: 'join', code: intent.code, name });
-  }
+  authSent = false;
+  void (async () => {
+    await ensureAuthSent();
+    const token = recall(STORE.token);
+    const code = recall(STORE.code);
+    if (token && code) {
+      net.send({ t: 'resume', code, token });
+    } else if (intent.kind === 'create') {
+      net.send({ t: 'create', name, rules: intent.rules });
+    } else if (intent.kind === 'join') {
+      net.send({ t: 'join', code: intent.code, name });
+    }
+  })();
+}
+
+/** Pull the latest account and record, then repaint. */
+async function refreshAccount(): Promise<void> {
+  if (!accountsEnabled) return;
+  account = await withTimeout(currentAccount(), AUTH_TIMEOUT_MS, null);
+  accountState = account === null ? 'unavailable' : 'ready';
+  stats = account === null ? null : await withTimeout(fetchStats(), AUTH_TIMEOUT_MS, null);
+  render();
 }
 
 function onMessage(msg: ServerMessage): void {
@@ -106,9 +166,17 @@ function onMessage(msg: ServerMessage): void {
         intent = { kind: 'idle' };
       }
       break;
+    case 'authed':
+      if (msg.ok) void refreshAccount();
+      break;
     case 'pong':
       return;
   }
+  // A finished match has just been written server-side, so the record moved.
+  if (msg.t === 'state' && msg.view.phase === 'matchOver' && lastPhase !== 'matchOver') {
+    void refreshAccount();
+  }
+  lastPhase = view?.phase ?? null;
   render();
 }
 
@@ -150,6 +218,83 @@ function play(tile: TileId, end: End): void {
 // ---------------------------------------------------------------------------
 // Landing screen
 // ---------------------------------------------------------------------------
+
+/**
+ * The account panel. Absent entirely when the server has no Supabase project
+ * configured, so a guest-only deployment shows no dead UI.
+ */
+function renderAccountCard(): HTMLElement | null {
+  if (!accountsEnabled) return null;
+
+  const card = el('div', 'card');
+  card.appendChild(el('h2', undefined, 'Your record'));
+
+  if (account === null) {
+    card.appendChild(
+      el(
+        'p',
+        'hint',
+        accountState === 'unavailable'
+          ? 'Could not reach the account service — you can still play, but this match will not be saved.'
+          : 'Setting up your player…',
+      ),
+    );
+    return card;
+  }
+
+  if (stats === null || stats.played === 0) {
+    card.appendChild(el('p', 'hint', 'No finished matches yet — play one and it lands here.'));
+  } else {
+    const row = el('div', 'statrow');
+    const add = (value: string, label: string): void => {
+      const cell = el('div', 'stat');
+      cell.appendChild(el('b', undefined, value));
+      cell.appendChild(el('span', undefined, label));
+      row.appendChild(cell);
+    };
+    add(String(stats.played), stats.played === 1 ? 'match' : 'matches');
+    add(String(stats.won), 'won');
+    add(`${Math.round(stats.winPercent)}%`, 'win rate');
+    card.appendChild(row);
+  }
+
+  if (claimNotice) card.appendChild(el('p', 'hint', claimNotice));
+
+  if (account.anonymous) {
+    card.appendChild(
+      el('p', 'hint', 'You are playing as a guest. Add an email to keep this record.'),
+    );
+    const row = el('div', 'row');
+    const email = el('input') as HTMLInputElement;
+    email.type = 'email';
+    email.placeholder = 'you@example.com';
+    const save = el('button', 'small', 'Save') as HTMLButtonElement;
+    const claim = (): void => {
+      const value = email.value.trim();
+      if (!/^\S+@\S+\.\S+$/.test(value)) {
+        claimNotice = 'That does not look like an email address.';
+        render();
+        return;
+      }
+      save.disabled = true;
+      void claimAccount(value).then((result) => {
+        claimNotice = result.message;
+        void refreshAccount();
+      });
+    };
+    save.addEventListener('click', claim);
+    email.addEventListener('keydown', (ev) => {
+      if ((ev as KeyboardEvent).key === 'Enter') claim();
+    });
+    row.appendChild(email);
+    row.appendChild(save);
+    card.appendChild(row);
+  } else {
+    card.appendChild(el('p', 'hint', `Signed in as ${account.email ?? 'your account'}.`));
+  }
+
+  return card;
+}
 
 function renderLanding(): HTMLElement {
   const wrap = el('div', 'center');
@@ -233,7 +378,11 @@ function renderLanding(): HTMLElement {
         countAllRemaining: countAllBox.checked,
       },
     };
-    net.send({ t: 'create', name, rules: (intent as { rules: Partial<HouseRules> }).rules });
+    const rules = (intent as { rules: Partial<HouseRules> }).rules;
+    void (async () => {
+      await ensureAuthSent();
+      net.send({ t: 'create', name, rules });
+    })();
     render();
   });
   createCard.appendChild(createBtn);
@@ -259,8 +408,12 @@ function renderLanding(): HTMLElement {
       return;
     }
     error = '';
-    intent = { kind: 'join', code: formCode.trim() };
-    net.send({ t: 'join', code: formCode.trim(), name });
+    const code = formCode.trim();
+    intent = { kind: 'join', code };
+    void (async () => {
+      await ensureAuthSent();
+      net.send({ t: 'join', code, name });
+    })();
     render();
   };
   joinBtn.addEventListener('click', doJoin);
@@ -271,6 +424,9 @@ function renderLanding(): HTMLElement {
   joinRow.appendChild(joinBtn);
   joinCard.appendChild(joinRow);
   wrap.appendChild(joinCard);
+
+  const accountCard = renderAccountCard();
+  if (accountCard !== null) wrap.appendChild(accountCard);
 
   if (!online) wrap.appendChild(el('p', 'hint', 'Connecting…'));
   return wrap;
@@ -681,3 +837,7 @@ window.setInterval(() => {
 
 render();
 net.connect();
+
+if (accountsEnabled) {
+  void ensureSession(name).then(refreshAccount);
+}

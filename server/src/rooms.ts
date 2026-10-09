@@ -8,6 +8,7 @@
  */
 
 import { randomBytes, randomInt } from 'node:crypto';
+import type { AuthedUser, MatchPlayerRecord, MatchRecord, Supabase } from './supabase.js';
 import {
   type HouseRules,
   type MatchState,
@@ -28,6 +29,7 @@ import {
   seededRng,
   startNextRound,
   teamName,
+  teamOf,
 } from '@domino/shared';
 
 /** Seconds a player has to move before the server plays for them. */
@@ -42,11 +44,14 @@ const MAX_CHAT = 300;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 export interface Player {
+  /** Room-scoped session token, used to resume a seat. Not an account id. */
   readonly id: string;
   name: string;
   seat: Seat | null;
   socket: unknown | null;
   lastSeen: number;
+  /** Supabase account, when the connection presented a valid token. */
+  user: AuthedUser | null;
 }
 
 export type Broadcast = (player: Player, message: unknown) => void;
@@ -97,21 +102,30 @@ export class Room {
   turnDeadline: number | null = null;
   private timer: NodeJS.Timeout | null = null;
   private emptySince: number | null = Date.now();
+  private startedAt: Date | null = null;
+  /** Guards against writing the same finished match more than once. */
+  private recorded = false;
 
-  constructor(code: string, rules: Partial<HouseRules> | undefined, private send: Broadcast) {
+  constructor(
+    code: string,
+    rules: Partial<HouseRules> | undefined,
+    private send: Broadcast,
+    private supabase: Supabase | null = null,
+  ) {
     this.code = code;
     this.rules = mergeRules(rules);
   }
 
   // -- membership ----------------------------------------------------------
 
-  addPlayer(name: string): Player {
+  addPlayer(name: string, user: AuthedUser | null = null): Player {
     const player: Player = {
       id: randomBytes(16).toString('hex'),
       name: sanitizeName(name),
       seat: null,
       socket: null,
       lastSeen: Date.now(),
+      user,
     };
     this.players.set(player.id, player);
     if (this.hostId === null) this.hostId = player.id;
@@ -175,6 +189,8 @@ export class Room {
       throw new RuleError('all four seats must be filled — this game is played two against two');
     }
     this.match = newMatch(this.rules, cryptoRng());
+    this.startedAt = new Date();
+    this.recorded = false;
     this.pushLog(
       `Match to ${this.rules.targetScore}. ${this.seatLabel(this.match.round?.turn ?? 0)} opens.`,
     );
@@ -190,6 +206,7 @@ export class Room {
     this.pushLog(this.describeMove(player, move));
     if (outcome.result !== null) this.pushLog(this.describeRoundResult(outcome.result));
     this.armTimer();
+    this.maybeRecord();
   }
 
   nextRound(player: Player): void {
@@ -210,6 +227,8 @@ export class Room {
       throw new RuleError('the match is not finished');
     }
     this.match = newMatch(this.rules, cryptoRng());
+    this.startedAt = new Date();
+    this.recorded = false;
     this.log = [];
     this.pushLog(`Rematch to ${this.rules.targetScore}.`);
     this.armTimer();
@@ -234,6 +253,7 @@ export class Room {
           : `${this.seatLabel(seat)} ran out of time — played ${choice.tile} automatically.`,
       );
       if (outcome.result !== null) this.pushLog(this.describeRoundResult(outcome.result));
+      this.maybeRecord();
     } catch {
       // A rules error here would mean a bug rather than bad input; stop the
       // clock instead of looping on it.
@@ -242,6 +262,48 @@ export class Room {
     }
     this.armTimer();
     this.broadcastState();
+  }
+
+  /**
+   * Persist a finished match, once. Fire-and-forget: the write must never
+   * delay the table, and a failure is logged inside the Supabase client
+   * rather than surfaced to players.
+   */
+  private maybeRecord(): void {
+    const match = this.match;
+    if (this.recorded || match === null || match.phase !== 'matchOver') return;
+    if (this.supabase === null || !this.supabase.enabled) return;
+    this.recorded = true;
+
+    const remaining = match.lastResult?.remaining ?? [0, 0, 0, 0];
+    const players: MatchPlayerRecord[] = SEATS.flatMap((seat) => {
+      const p = this.playerAtSeat(seat);
+      if (p === null) return [];
+      return [
+        {
+          seat,
+          player_id: p.user?.id ?? null,
+          display_name: p.name,
+          team: teamOf(seat),
+          won: match.winner === teamOf(seat),
+          pips_left: remaining[seat] ?? 0,
+        },
+      ];
+    });
+
+    const record: MatchRecord = {
+      room_code: this.code,
+      rules: this.rules,
+      target_score: this.rules.targetScore,
+      winning_team: match.winner,
+      score_a: match.scores[0],
+      score_b: match.scores[1],
+      rounds_played: match.roundNumber,
+      started_at: (this.startedAt ?? new Date()).toISOString(),
+      players,
+    };
+
+    void this.supabase.recordMatch(record);
   }
 
   private armTimer(): void {
@@ -331,6 +393,7 @@ export class Room {
       log: this.log,
       turnDeadline: match?.phase === 'playing' ? this.turnDeadline : null,
       spectators,
+      authed: player.user !== null,
     };
   }
 
@@ -353,7 +416,10 @@ export class Room {
 export class RoomRegistry {
   private rooms = new Map<string, Room>();
 
-  constructor(private send: Broadcast) {
+  constructor(
+    private send: Broadcast,
+    private supabase: Supabase | null = null,
+  ) {
     setInterval(() => this.reap(), 60_000).unref();
   }
 
@@ -369,7 +435,7 @@ export class RoomRegistry {
   }
 
   create(rules: Partial<HouseRules> | undefined): Room {
-    const room = new Room(this.freshCode(), rules, this.send);
+    const room = new Room(this.freshCode(), rules, this.send, this.supabase);
     this.rooms.set(room.code, room);
     return room;
   }

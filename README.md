@@ -79,12 +79,48 @@ fly launch --now          # or: railway up
 The only requirement is a host that supports **WebSockets** and does not put
 the process to sleep between requests — all three above do on their free tiers.
 
+## Accounts and stats (optional)
+
+Supabase adds durable identity and match history. It is entirely optional: with
+no credentials configured, every player is a guest and the game is unchanged.
+
+Players sign in **anonymously**, so joining still costs nothing but a name —
+but that anonymous user is a real account underneath, so a record survives a
+reload and can later be claimed with an email, keeping its history.
+
+Setup is three steps, in [`supabase/README.md`](supabase/README.md): run the
+migration, switch on anonymous sign-ins, set four environment variables.
+
+The division of trust matters here:
+
+- The browser signs in with Supabase and gets a JWT.
+- It hands that JWT to the **game server**, which verifies it against the
+  project's JWKS (or a legacy HS256 secret). Only then does the server trust a
+  user id. A token that is expired, tampered with, or minted for another
+  project is rejected and the player stays a guest.
+- Only the server writes results, with the service role key, through a single
+  `record_match()` function. There is **no insert policy** on the match tables
+  and that function is revoked from `anon` and `authenticated`, so a tampered
+  client cannot award itself a win.
+- Clients read their own profile, matches and stats directly from Postgres,
+  where row-level security — not client-side good behaviour — is what stops
+  them reading anyone else's.
+
+Supabase is deliberately not on the critical path. Every call is time-boxed,
+failures are swallowed and logged, and the client falls back to guest play if
+sign-in does not complete. A Supabase outage costs you a history row, never a
+game in progress.
+
+`supabase-js` is loaded in its own chunk only when the project is configured,
+so a guest-only deployment ships ~8 kB gzipped rather than ~67 kB.
+
 ## How it is put together
 
 ```
 shared/   rules engine + wire protocol   (pure, no I/O, heavily tested)
 server/   WebSocket server, rooms, seats (owns all authoritative state)
 client/   browser UI                     (renders what the server sends)
+supabase/ schema, RLS policies, setup    (optional: accounts and history)
 ```
 
 **The server is authoritative.** Dominoes is a hidden-information game: if the
@@ -108,6 +144,6 @@ Other things the server handles, because online games need them:
 
 ## Not built yet
 
-Deliberately out of scope for this first version: accounts and persistent
-stats, a public lobby or matchmaking, spectator-friendly replays, sound, and
-AI opponents to fill empty seats.
+Deliberately out of scope: a public lobby or matchmaking, leaderboards across
+players, spectator-friendly replays, sound, and AI opponents to fill empty
+seats — right now a table needs four humans to start.

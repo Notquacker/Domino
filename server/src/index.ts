@@ -18,6 +18,7 @@ import {
   SEATS,
 } from '@domino/shared';
 import { Room, RoomRegistry, sanitizeChat, sanitizeName, type Player } from './rooms.js';
+import { Supabase, type AuthedUser } from './supabase.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIR = resolve(HERE, '../../client/dist');
@@ -47,6 +48,8 @@ const MIME: Record<string, string> = {
 interface Session {
   room: Room | null;
   player: Player | null;
+  /** Set once this connection presents a token the server could verify. */
+  user: AuthedUser | null;
   hits: number;
   windowStart: number;
 }
@@ -58,10 +61,16 @@ function sendTo(socket: WebSocket, message: unknown): void {
   socket.send(JSON.stringify(message));
 }
 
+/**
+ * Accounts are optional. With no Supabase credentials configured this is a
+ * no-op and every player is a guest, exactly as before.
+ */
+const supabase = Supabase.fromEnv();
+
 const registry = new RoomRegistry((player, message) => {
   const socket = player.socket as WebSocket | null;
   if (socket !== null) sendTo(socket, message);
-});
+}, supabase);
 
 function fail(socket: WebSocket, message: string): void {
   sendTo(socket, { t: 'error', message });
@@ -162,16 +171,31 @@ function attach(session: Session, socket: WebSocket, room: Room, player: Player)
   room.touch();
 }
 
-function handle(socket: WebSocket, session: Session, msg: ClientMessage): void {
+async function handle(socket: WebSocket, session: Session, msg: ClientMessage): Promise<void> {
   if (msg.t === 'ping') {
     sendTo(socket, { t: 'pong' });
     return;
   }
 
+  if (msg.t === 'auth') {
+    // A token that does not verify is not an error worth closing over — the
+    // player simply stays a guest.
+    const user = await supabase.verify(String(msg.jwt ?? ''));
+    session.user = user;
+    if (user !== null && session.player !== null) session.player.user = user;
+    sendTo(socket, { t: 'authed', ok: user !== null, anonymous: user?.isAnonymous ?? false });
+    if (user !== null && session.player !== null) {
+      void supabase.upsertProfile(user, session.player.name);
+      session.room?.broadcastState();
+    }
+    return;
+  }
+
   if (msg.t === 'create') {
     const room = registry.create(msg.rules);
-    const player = room.addPlayer(sanitizeName(msg.name));
+    const player = room.addPlayer(sanitizeName(msg.name), session.user);
     attach(session, socket, room, player);
+    if (session.user !== null) void supabase.upsertProfile(session.user, player.name);
     room.sit(player, 0);
     room.pushLog(`${player.name} opened the table.`);
     sendTo(socket, { t: 'welcome', code: room.code, token: player.id, view: room.viewFor(player) });
@@ -185,8 +209,9 @@ function handle(socket: WebSocket, session: Session, msg: ClientMessage): void {
       fail(socket, 'No table with that code. Check the letters and try again.');
       return;
     }
-    const player = room.addPlayer(sanitizeName(msg.name));
+    const player = room.addPlayer(sanitizeName(msg.name), session.user);
     attach(session, socket, room, player);
+    if (session.user !== null) void supabase.upsertProfile(session.user, player.name);
     // Seat them automatically if there is room; otherwise they watch.
     const free = SEATS.find((s) => room.playerAtSeat(s) === null);
     if (free !== undefined && room.match === null) room.sit(player, free);
@@ -206,6 +231,8 @@ function handle(socket: WebSocket, session: Session, msg: ClientMessage): void {
       return;
     }
     attach(session, socket, room, player);
+    // A resumed seat picks up whatever account this connection authenticated.
+    if (session.user !== null) player.user = session.user;
     room.pushLog(`${player.name} reconnected.`);
     sendTo(socket, { t: 'welcome', code: room.code, token: player.id, view: room.viewFor(player) });
     room.broadcastState();
@@ -258,7 +285,13 @@ function handle(socket: WebSocket, session: Session, msg: ClientMessage): void {
 const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: MAX_FRAME_BYTES });
 
 wss.on('connection', (socket: WebSocket) => {
-  const session: Session = { room: null, player: null, hits: 0, windowStart: Date.now() };
+  const session: Session = {
+    room: null,
+    player: null,
+    user: null,
+    hits: 0,
+    windowStart: Date.now(),
+  };
   sessions.set(socket, session);
 
   socket.on('message', (data) => {
@@ -280,16 +313,14 @@ wss.on('connection', (socket: WebSocket) => {
       return;
     }
 
-    try {
-      handle(socket, session, msg);
-    } catch (err) {
+    handle(socket, session, msg).catch((err: unknown) => {
       if (err instanceof RuleError) {
         fail(socket, err.message);
       } else {
         console.error('[domino] handler error', err);
         fail(socket, 'Something went wrong on the server.');
       }
-    }
+    });
   });
 
   socket.on('close', () => {
@@ -336,6 +367,11 @@ setInterval(() => {
 
 http.listen(PORT, HOST, () => {
   console.log(`[domino] listening on http://${HOST}:${PORT}`);
+  console.log(
+    supabase.enabled
+      ? '[domino] accounts and match history enabled'
+      : '[domino] no Supabase configured — guest play only',
+  );
 });
 
 function shutdown(): void {

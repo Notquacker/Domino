@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@domino/shared": "*"
+    "@domino/shared": "*",
+    "@supabase/supabase-js": "2.117.3"
   }
 }
