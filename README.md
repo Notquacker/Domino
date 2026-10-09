@@ -85,20 +85,32 @@ it. After that every push deploys.
 Pages serves static files only, so it can host this demo but never the real
 game, which needs a Node process and WebSockets.
 
-## Deploying
+## Deploying — so people can play on their own phones
 
-The server serves the built client itself, so one process is the whole app.
-It listens on `$PORT` (default 8080) and answers `GET /healthz`.
+Everyone on a separate phone means the server has to be running somewhere both
+phones can reach. One process is the whole app: it serves the built client
+itself, listens on `$PORT` (default 8080) and answers `GET /healthz`.
 
-A `Dockerfile` is included and works as-is on Fly.io, Railway, Render and
-anything else that runs a container:
+**You do not need a computer for this.** Render deploys straight from the repo
+through its web dashboard, which works fine in a phone browser:
 
-```bash
-fly launch --now          # or: railway up
-```
+1. Sign in at [render.com](https://render.com) with GitHub.
+2. **New → Blueprint**, pick this repo, **Apply**.
+3. `render.yaml` supplies the rest. When it goes live you get a URL like
+   `https://domino.onrender.com` — send that to the other three players.
 
-The only requirement is a host that supports **WebSockets** and does not put
-the process to sleep between requests — all three above do on their free tiers.
+On the free plan the service sleeps after about 15 minutes with no traffic and
+takes roughly a minute to wake, so whoever opens the link first after a quiet
+spell waits for that; the page says so while it happens. Once a game is going,
+the server's 30-second heartbeat keeps traffic flowing so it should not sleep
+mid-match. Rooms live in memory, so a sleep or a redeploy ends any table in
+progress.
+
+From a computer, `fly launch --now` works the same way off the `Dockerfile`.
+
+The only real requirement is a host that runs a persistent Node process and
+allows **WebSockets**. Static hosts cannot do it — see the note on GitHub Pages
+above.
 
 ## Accounts and stats (optional)
 

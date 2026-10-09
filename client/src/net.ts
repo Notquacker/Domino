@@ -6,7 +6,8 @@
 import type { ClientMessage, ServerMessage } from '@domino/shared';
 
 export type ServerHandler = (msg: ServerMessage) => void;
-export type StatusHandler = (online: boolean) => void;
+/** `attempts` counts consecutive failed connects, for a honest waking message. */
+export type StatusHandler = (online: boolean, attempts: number) => void;
 
 const MAX_BACKOFF_MS = 8000;
 
@@ -36,7 +37,7 @@ export class Net {
 
     socket.addEventListener('open', () => {
       this.attempts = 0;
-      this.onStatus(true);
+      this.onStatus(true, 0);
       this.onReady();
       const pending = this.queue;
       this.queue = [];
@@ -58,7 +59,7 @@ export class Net {
       if (this.heartbeat !== null) window.clearInterval(this.heartbeat);
       this.heartbeat = null;
       this.socket = null;
-      this.onStatus(false);
+      this.onStatus(false, this.attempts);
       if (this.closedByUs) return;
       const delay = Math.min(MAX_BACKOFF_MS, 400 * 2 ** this.attempts++);
       window.setTimeout(() => this.connect(), delay);

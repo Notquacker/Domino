@@ -1,0 +1,27 @@
+# Render blueprint — deploy the multiplayer game from a browser, phone included.
+#
+# In the Render dashboard: New -> Blueprint -> pick this repo -> Apply.
+# Everything below is picked up automatically; nothing needs filling in.
+#
+# Note on the free plan: a free service sleeps after about 15 minutes with no
+# traffic and takes roughly a minute to wake, so whoever opens the link first
+# after a quiet spell waits for that. Once a game is running the server's own
+# 30-second heartbeat keeps traffic flowing, so it should not sleep mid-match.
+# Rooms live in memory, so a sleep or redeploy ends any table in progress.
+services:
+  - type: web
+    name: domino
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    # Closest Render region to the Caribbean. Change to oregon, frankfurt or
+    # singapore if your players are elsewhere — lower latency is nicer, and
+    # for a turn-based game any of them is perfectly playable.
+    region: ohio
+    healthCheckPath: /healthz
+    # Render supplies PORT itself and the server reads it; nothing to set here.
+    # To turn on accounts later, add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
+    # under Environment in the dashboard (see supabase/README.md).
+    envVars:
+      - key: NODE_ENV
+        value: production

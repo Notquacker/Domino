@@ -79,14 +79,16 @@ let stats: Stats | null = null;
 let accountState: 'pending' | 'ready' | 'unavailable' = 'pending';
 /** Reset on every connect: the token must be presented once per socket. */
 let authSent = false;
+let connectAttempts = 0;
 let claimNotice = '';
 
 let lastPhase: string | null = null;
 
 const net = new Net(onMessage, onStatus, onReady);
 
-function onStatus(up: boolean): void {
+function onStatus(up: boolean, attempts: number): void {
   online = up;
+  connectAttempts = attempts;
   render();
 }
 
@@ -428,7 +430,19 @@ function renderLanding(): HTMLElement {
   const accountCard = renderAccountCard();
   if (accountCard !== null) wrap.appendChild(accountCard);
 
-  if (!online) wrap.appendChild(el('p', 'hint', 'Connecting…'));
+  if (!online) {
+    // Free hosting sleeps when idle, so a cold start can take about a minute.
+    // Say that rather than leaving someone staring at "Connecting…".
+    wrap.appendChild(
+      el(
+        'p',
+        'hint',
+        connectAttempts >= 3
+          ? 'Waking the server up — on free hosting this can take a minute. It will connect on its own.'
+          : 'Connecting…',
+      ),
+    );
+  }
   return wrap;
 }
 
@@ -539,7 +553,9 @@ function renderTopbar(v: PlayerView): HTMLElement {
 
   const meta = el('div', 'meta');
   meta.appendChild(el('div', 'code', v.code));
-  meta.appendChild(el('div', undefined, `Round ${v.roundNumber}${online ? '' : ' · offline'}`));
+  meta.appendChild(
+    el('div', undefined, `Round ${v.roundNumber}${online ? '' : ' · reconnecting…'}`),
+  );
   bar.appendChild(meta);
   return bar;
 }
