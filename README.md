@@ -89,7 +89,11 @@ but that anonymous user is a real account underneath, so a record survives a
 reload and can later be claimed with an email, keeping its history.
 
 Setup is three steps, in [`supabase/README.md`](supabase/README.md): run the
-migration, switch on anonymous sign-ins, set four environment variables.
+migration, switch on anonymous sign-ins (**off by default** — nothing works
+until it is on), and set four environment variables. Then
+`npm run verify:supabase` checks the result by actively trying to cheat: it
+attempts to write match rows with the public anon key and to read a stranger's
+match, and reports a failure if either succeeds.
 
 The division of trust matters here:
 

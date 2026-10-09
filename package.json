@@ -18,7 +18,8 @@
     "dev": "npm run build:shared && concurrently -n server,client -c blue,magenta \"tsc -p server --watch --preserveWatchOutput\" \"vite client\"",
     "start": "node server/dist/index.js",
     "typecheck": "tsc -p shared && tsc -p server && tsc --noEmit -p client && tsc --noEmit -p shared/test && tsc --noEmit -p server/test",
-    "test:rules": "npm run build:shared && node --test shared/test/rules.test.ts"
+    "test:rules": "npm run build:shared && node --test shared/test/rules.test.ts",
+    "verify:supabase": "npm run build:server && node scripts/verify-supabase.mjs"
   },
   "devDependencies": {
     "concurrently": "9.1.2",

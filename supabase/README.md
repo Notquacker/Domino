@@ -36,6 +36,21 @@ Client (safe to ship in the bundle — RLS is what protects the data):
 | `VITE_SUPABASE_URL` | same Project URL |
 | `VITE_SUPABASE_ANON_KEY` | Project Settings → API → `anon` public key |
 
+## 4. Check it
+
+```bash
+npm run verify:supabase
+```
+
+This does not take the migration on trust. It signs in anonymously, confirms
+the game server accepts a real token from your project, and then actively tries
+to cheat: inserting match rows with the public anon key, calling
+`record_match()` as a client, and reading a match the player was not part of.
+All three must be refused. It writes one throwaway match and deletes it again.
+
+A failure tells you exactly which guarantee is missing — most often the
+migration was only partly applied, or anonymous sign-in is still switched off.
+
 ## How the pieces fit
 
 ```
