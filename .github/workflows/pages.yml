@@ -1,5 +1,12 @@
 # Publishes the standalone pass-and-play demo to GitHub Pages.
 #
+# ONE-TIME SETUP: enable Pages first, under
+#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+# Until that is done every run fails at "Configure Pages" with
+# "Get Pages site failed ... Not Found". The workflow cannot do it itself:
+# the Actions token is refused ("Resource not accessible by integration"),
+# because creating a Pages site needs repository admin, not a workflow.
+#
 # Pages serves static files only, so this is the demo, not the multiplayer
 # game: that needs a running Node process for the authoritative server and
 # its WebSockets, which Pages cannot provide. See README.md for deploying
@@ -40,11 +47,9 @@ jobs:
 
       - run: npm run build:demo
 
-      # Turns Pages on for the repo if it is not already, so there is no
-      # manual settings step before the first deploy.
+      # Reads the repository's Pages configuration. Requires Pages to be
+      # enabled already — see the note at the top of this file.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:

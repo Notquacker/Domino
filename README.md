@@ -77,8 +77,13 @@ way to check the house rules match how you play. It is not the multiplayer
 game: there is no network and no hidden state.
 
 Pushing to the default branch publishes it to GitHub Pages
-(`.github/workflows/pages.yml`). Pages serves static files only, so it can host
-this demo but never the real game, which needs a Node process and WebSockets.
+(`.github/workflows/pages.yml`), giving the repo a link anyone can open. Pages
+has to be switched on once, by hand, under **Settings → Pages → Build and
+deployment → Source: "GitHub Actions"** — a workflow is not allowed to enable
+it. After that every push deploys.
+
+Pages serves static files only, so it can host this demo but never the real
+game, which needs a Node process and WebSockets.
 
 ## Deploying
 
