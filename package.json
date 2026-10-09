@@ -1,0 +1,28 @@
+{
+  "name": "domino-curacao",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Online multiplayer Curacao-style partnership dominoes",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build:shared": "tsc -p shared",
+    "build:server": "npm run build:shared && tsc -p server",
+    "build:client": "npm run build:shared && vite build client",
+    "build": "npm run build:server && npm run build:client",
+    "test": "npm run build && node --test shared/test/rules.test.ts server/test/e2e.test.ts",
+    "dev": "npm run build:shared && concurrently -n server,client -c blue,magenta \"tsc -p server --watch --preserveWatchOutput\" \"vite client\"",
+    "start": "node server/dist/index.js",
+    "typecheck": "tsc -p shared && tsc -p server && tsc --noEmit -p client && tsc --noEmit -p shared/test && tsc --noEmit -p server/test",
+    "test:rules": "npm run build:shared && node --test shared/test/rules.test.ts"
+  },
+  "devDependencies": {
+    "concurrently": "9.1.2",
+    "typescript": "5.7.3",
+    "vite": "6.4.4"
+  }
+}

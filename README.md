@@ -1,0 +1,113 @@
+# Domino — Curaçao style, online
+
+A browser-based, real-time multiplayer domino game for four players in two
+teams. Open a table, share a four-letter code, and play.
+
+No installs, no accounts — players pick a name, join with a code, and play.
+
+## The game
+
+Curaçao-style partnership dominoes:
+
+- **Double-six set (28 tiles), four players, two teams.** Partners sit
+  opposite each other: seats 1 & 3 against seats 2 & 4.
+- **The whole set is dealt** — seven tiles each, so there is **no boneyard**.
+  A player who cannot follow either open end passes.
+- **You must play if you can.** Passing with a playable tile is rejected by the
+  server, not merely discouraged.
+- **The 6-6 opens the first round** of a match, and whoever holds it leads.
+  Afterwards the previous round's winner leads with any tile.
+- **A round ends** when someone plays their last tile, or when nobody can move.
+- **Scoring:** the winning team takes the pips left in the **opponents'** hands.
+  A blocked round goes to the team with the fewer pips; a dead level is a no-score
+  re-deal.
+- **The match** runs to 100, 150 or 200 points, chosen when the table is opened.
+
+### House rules you can toggle
+
+Local domino varies family to family, so the contested parts are options set
+when the table is created:
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| Play to | 150 | Target score: 100, 150 or 200. |
+| Capicú bonus | off | +25 for going out on a tile that matched both open ends. |
+| Count every unplayed tile | off | Score all remaining pips, including your partner's, instead of just the opponents'. |
+| Forced 6-6 opening | on | Round one is opened by the 6-6 holder, who must play it. |
+
+Two conventions are baked in and worth confirming against how you play:
+
+1. **A blocked round is won on team pip totals**, and the next lead goes to
+   whichever member of the winning team held fewer pips.
+2. **A level blocked round scores nothing** and is re-dealt by the same opener.
+
+Both live in `shared/src/rules.ts` and are small to change.
+
+## Running it
+
+```bash
+npm install
+npm run build
+npm start          # http://localhost:8080
+```
+
+For development, with the client hot-reloading against the game server:
+
+```bash
+npm run dev        # client on :5173, server on :8080
+```
+
+Tests:
+
+```bash
+npm test           # rules unit tests + a full end-to-end match over WebSockets
+npm run typecheck
+```
+
+## Deploying
+
+The server serves the built client itself, so one process is the whole app.
+It listens on `$PORT` (default 8080) and answers `GET /healthz`.
+
+A `Dockerfile` is included and works as-is on Fly.io, Railway, Render and
+anything else that runs a container:
+
+```bash
+fly launch --now          # or: railway up
+```
+
+The only requirement is a host that supports **WebSockets** and does not put
+the process to sleep between requests — all three above do on their free tiers.
+
+## How it is put together
+
+```
+shared/   rules engine + wire protocol   (pure, no I/O, heavily tested)
+server/   WebSocket server, rooms, seats (owns all authoritative state)
+client/   browser UI                     (renders what the server sends)
+```
+
+**The server is authoritative.** Dominoes is a hidden-information game: if the
+browser held the hands, anyone could read the other players' tiles out of
+devtools. So the server owns the shuffle, every hand, and move validation, and
+sends each player only their own tiles plus public information — the board and
+everyone else's tile *counts*. The client never decides whether a move is legal;
+it only offers the moves the server has already said are available. An end-to-end
+test asserts that no frame ever carries a tile belonging to someone else.
+
+Other things the server handles, because online games need them:
+
+- **Reconnection.** Players are identified by a token, not a socket. Close the
+  tab mid-match and rejoin to the same seat with the same hand.
+- **A turn clock.** 60 seconds per move; when it runs out the server plays a
+  legal move so one person walking away does not freeze the table.
+- **Disconnects.** A seat is held for the rest of the match; before the match
+  starts, leaving frees the seat.
+- **Abuse basics.** Per-connection rate limiting, a 4 KB frame cap, name and
+  chat length limits, and idle rooms reclaimed after 30 minutes.
+
+## Not built yet
+
+Deliberately out of scope for this first version: accounts and persistent
+stats, a public lobby or matchmaking, spectator-friendly replays, sound, and
+AI opponents to fill empty seats.
