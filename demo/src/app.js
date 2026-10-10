@@ -397,8 +397,15 @@
     var me = turn();
     for (var i = 1; i <= 3; i++) {
       var seat = (me + i) % 4;
-      var card = el('div', 'opp ' + teamCls(seat));
-      card.appendChild(el('div', 'nm', S.names[seat] || 'Seat ' + (seat + 1)));
+      // Play goes round one seat at a time, so the seat after the one on turn
+      // is next. Said in words as well as colour: a tinted border is easy to
+      // miss on a phone, and colour alone is no use to everyone.
+      var isNext = seat === (me + 1) % 4;
+      var card = el('div', 'opp ' + teamCls(seat) + (isNext ? ' next' : ''));
+      var nm = el('div', 'nm');
+      nm.appendChild(el('span', null, S.names[seat] || 'Seat ' + (seat + 1)));
+      if (isNext) nm.appendChild(el('span', 'tag soon', 'NEXT'));
+      card.appendChild(nm);
       var tiles = round().hands[seat].length;
       var rel = seat === (me + 2) % 4 ? 'Your partner' : 'Opponent';
       card.appendChild(el('div', 'sub', rel + ' · ' + tiles + ' tiles'));
@@ -643,7 +650,10 @@
     if (S.match.phase !== 'playing') return s;
     var name = S.names[turn()] || 'Seat ' + (turn() + 1);
     // No hint about whether anything fits — that is the player's problem.
-    s.appendChild(el('span', 'me', name + ' to play.'));
+    s.appendChild(el('span', 'me', name + ' to play'));
+    var after = (turn() + 1) % 4;
+    s.appendChild(el('span', 'upnext',
+      ' · then ' + (S.names[after] || 'Seat ' + (after + 1))));
     return s;
   }
 

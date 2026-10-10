@@ -324,5 +324,14 @@ body.shaking { animation: shake .62s cubic-bezier(.36,.07,.19,.97); }
 .tile.lifted { background: transparent; border-style: dashed;
   border-color: #ffffff2e; box-shadow: none; }
 .tile.lifted .half { visibility: hidden; }
+/* Who plays next: a quieter version of the on-turn highlight, so the two
+   read as a sequence rather than two unrelated states. */
+.opp.next { border-color: #e8b65c4d; }
+.opp .nm { display: flex; align-items: center; gap: 6px; }
+.opp .nm span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opp .tag { flex: 0 0 auto; font-size: 9px; font-weight: 800; letter-spacing: .08em;
+  padding: 2px 5px; border-radius: 999px; }
+.opp .tag.soon { background: #e8b65c2e; color: var(--gold, #e0b252); }
+.status .upnext { color: var(--muted, #9bb0a6); }
 </style>
 <div id="app"></div>

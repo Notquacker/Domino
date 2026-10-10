@@ -39,7 +39,7 @@ import {
   tileHas,
 } from '@domino/shared';
 
-/** Seconds a player has to move before the server plays for them. */
+/** Default seconds a player has to move. A table can set its own, or none. */
 export const TURN_SECONDS = 60;
 
 /** How long a computer player appears to think before it plays. */
@@ -130,6 +130,14 @@ function mergeRules(partial: Partial<HouseRules> | undefined): HouseRules {
     winBy: clampInt(partial.winBy, 1, 5, base.winBy),
     drawAt,
     blockedByLowestPlayer: bool(partial.blockedByLowestPlayer, base.blockedByLowestPlayer),
+    // null is a real choice here (no clock at all), so it has to be told
+    // apart from the field simply being absent.
+    turnSeconds:
+      partial.turnSeconds === undefined
+        ? base.turnSeconds
+        : partial.turnSeconds === null
+          ? null
+          : clampInt(partial.turnSeconds, 10, 600, base.turnSeconds ?? TURN_SECONDS),
     mustOpenDoubleSix: bool(partial.mustOpenDoubleSix, base.mustOpenDoubleSix),
     doubleSixOpensEveryRound: bool(
       partial.doubleSixOpensEveryRound,
@@ -605,11 +613,17 @@ export class Room {
       this.turnDeadline = null;
       return;
     }
-    this.turnDeadline = Date.now() + TURN_SECONDS * 1000;
+    const limit = this.rules.turnSeconds;
+    if (limit === null) {
+      // No clock: the table waits. Nobody gets played for.
+      this.turnDeadline = null;
+      return;
+    }
+    this.turnDeadline = Date.now() + limit * 1000;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.autoPlay();
-    }, TURN_SECONDS * 1000);
+    }, limit * 1000);
   }
 
   dispose(): void {

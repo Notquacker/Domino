@@ -596,6 +596,58 @@ function renderLanding(): HTMLElement {
     el('p', 'note', 'Go out on a tile that fits both open ends and the round is worth 2 instead of 1.'),
   );
 
+  // How long a player gets before the server plays for them. A table of
+  // family on the sofa usually wants no clock at all; a table spread across
+  // phones usually wants one, or somebody who wanders off stalls everyone.
+  const clockLabel = el('label');
+  clockLabel.appendChild(el('span', 'grow', 'Turn clock'));
+  const clockPick = document.createElement('select');
+  clockPick.id = 'turnclock';
+  for (const [value, text] of [
+    ['60', '60 seconds'],
+    ['30', '30 seconds'],
+    ['120', '2 minutes'],
+    ['off', 'No limit'],
+    ['custom', 'Custom…'],
+  ] as const) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    if (value === '60') option.selected = true;
+    clockPick.appendChild(option);
+  }
+  clockLabel.appendChild(clockPick);
+  rulesBox.appendChild(clockLabel);
+
+  const customRow = el('label');
+  customRow.appendChild(el('span', 'grow', 'Seconds per turn'));
+  const customSecs = el('input') as HTMLInputElement;
+  customSecs.id = 'turnsecs';
+  customSecs.type = 'number';
+  customSecs.min = '10';
+  customSecs.max = '600';
+  customSecs.value = '90';
+  customSecs.style.width = '80px';
+  customRow.appendChild(customSecs);
+  customRow.hidden = true;
+  rulesBox.appendChild(customRow);
+  clockPick.addEventListener('change', () => {
+    customRow.hidden = clockPick.value !== 'custom';
+  });
+  rulesBox.appendChild(
+    el('p', 'note', 'With no limit the table simply waits. With a clock, a player who runs out has a tile played for them, so one person wandering off cannot stall the game.'),
+  );
+
+  /** Seconds per turn, or null for no clock. */
+  const chosenClock = (): number | null => {
+    if (clockPick.value === 'off') return null;
+    if (clockPick.value === 'custom') {
+      const n = Math.round(Number(customSecs.value));
+      return Number.isFinite(n) ? Math.min(600, Math.max(10, n)) : 60;
+    }
+    return Number(clockPick.value);
+  };
+
   const sixEvery = el('label');
   const sixEveryBox = el('input') as HTMLInputElement;
   sixEveryBox.type = 'checkbox';
@@ -677,6 +729,7 @@ function renderLanding(): HTMLElement {
         openWithAnyDouble: anyDoubleBox.checked,
         blockedByLowestPlayer: blockLowBox.checked,
         doubleSixOpensEveryRound: sixEveryBox.checked,
+        turnSeconds: chosenClock(),
         countAllRemaining: countAllBox.checked,
       },
     };
@@ -912,17 +965,32 @@ function renderTopbar(v: PlayerView): HTMLElement {
   return bar;
 }
 
+/** Play goes round the table one seat at a time, so the next is simply +1. */
+function nextSeat(seat: Seat): Seat {
+  return ((seat + 1) % 4) as Seat;
+}
+
 function renderOpponents(v: PlayerView): HTMLElement {
   const wrap = el('div', 'opponents');
   // Start from the seat after yours so the order matches play order.
   const base = v.you ?? 0;
+  const upNext = v.turn === null ? null : nextSeat(v.turn);
   for (let i = 1; i <= 3; i++) {
     const seat = ((base + i) % 4) as Seat;
     const info = v.seats[seat] ?? null;
-    const card = el('div', `opp ${teamClass(seat)}${v.turn === seat ? ' turn' : ''}`);
+    const onTurn = v.turn === seat;
+    const next = !onTurn && upNext === seat;
+    const card = el(
+      'div',
+      `opp ${teamClass(seat)}${onTurn ? ' turn' : ''}${next ? ' next' : ''}`,
+    );
     const nameRow = el('div', 'name');
     if (info !== null) nameRow.appendChild(el('span', `dot${info.connected ? '' : ' off'}`));
     nameRow.appendChild(el('span', undefined, info?.name ?? 'Empty'));
+    // Say it in words as well as colour: on a small screen a tinted border is
+    // easy to miss, and colour alone is no use to everyone.
+    if (onTurn) nameRow.appendChild(el('span', 'tag now', 'PLAYING'));
+    else if (next) nameRow.appendChild(el('span', 'tag soon', 'NEXT'));
     card.appendChild(nameRow);
     const relation = seat === ((base + 2) % 4) ? 'Your partner' : 'Opponent';
     card.appendChild(el('div', 'sub', `${relation} · ${info?.tiles ?? 0} tiles`));
@@ -1297,12 +1365,20 @@ function renderStatus(v: PlayerView): HTMLElement {
     status.appendChild(el('span', 'turnme', 'Your turn.'));
   } else {
     const who = v.turn === null ? null : v.seats[v.turn];
-    status.appendChild(el('span', undefined, who ? `Waiting for ${who.name}…` : 'Waiting…'));
+    status.appendChild(el('span', undefined, who ? `${who.name} is playing` : 'Waiting…'));
+    // Who to watch for next, so nobody has to count seats round the table.
+    if (v.turn !== null) {
+      const after = nextSeat(v.turn);
+      const label = after === v.you ? 'you' : (v.seats[after]?.name ?? `seat ${after + 1}`);
+      status.appendChild(el('span', 'upnext', ` · then ${label}`));
+    }
   }
   if (v.turnDeadline !== null) {
     const clock = el('span', 'clock', '');
     clock.id = 'clock';
-    status.appendChild(el('span', undefined, ' '));
+    // Needs its own separator: without one it runs straight on from the name
+    // before it and reads as "then you 60s".
+    status.appendChild(el('span', 'upnext', ' · '));
     status.appendChild(clock);
   }
   return status;

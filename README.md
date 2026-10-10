@@ -96,6 +96,7 @@ when the table is created:
 | Draw once both teams reach 5 | **on** | Off means the target alone decides it. |
 | Point against a false pass | **on** | Passing while holding a playable tile scores for the other team. |
 | Capicú counts double | **on** | A capicú round is worth 2 instead of 1 (+25 pips in the pip game). |
+| Turn clock | 60s | Seconds per turn, or no limit. 30s, 60s, 2 min, none, or any value from 10 to 600. |
 | 6-6 decides the lead | on | Whoever holds the 6-6 opens. |
 | 6-6 opens every round | on | Not just the match's first round, so winning a round does not win the next lead. |
 | Locked round to the lightest hand | on | A blocked round is settled on the lightest single hand, not the lower two-hand total. |
@@ -108,6 +109,27 @@ Two conventions are baked in and worth confirming against how you play:
 2. **A level blocked round scores nothing** and is re-dealt by the same opener.
 
 Both live in `shared/src/rules.ts` and are small to change.
+
+### Whose turn it is
+
+The player on turn gets a gold card with a **PLAYING** badge; the one after
+them gets a quieter version with **NEXT**. Both are said in words as well as
+colour — a tinted border is easy to miss on a phone, and colour alone is no
+use to everyone. The status line under the table reads `Nena is playing ·
+then Pichi`, which saves counting seats round the table.
+
+Play always goes round one seat at a time, so "next" is simply `(turn + 1) %
+4`. When the next player is you, the badge has nowhere to go — there is no
+card for your own seat — and the status line says `then you` instead.
+
+### The turn clock
+
+`turnSeconds` is a table rule, not a constant: 60 seconds by default, any
+value from 10 to 600, or **null for no clock at all**. With a clock, a player
+who runs out has their first legal move played for them, so one person
+wandering off cannot stall three others. With none, the table simply waits
+and nobody is ever played for. The clock only shows on screen when there is
+one.
 
 ### Typing on a phone
 

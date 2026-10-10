@@ -96,6 +96,13 @@ export interface HouseRules {
    * fact the heavier of the two.
    */
   readonly blockedByLowestPlayer: boolean;
+  /**
+   * Seconds a player has to move before the server plays for them, or null
+   * for no clock at all. Around a kitchen table nobody is on a clock, so a
+   * family game may well want null; a game between phones usually wants one,
+   * or a player who walks off stalls the table indefinitely.
+   */
+  readonly turnSeconds: number | null;
   /** The 6-6 decides who opens, rather than the lead simply being free. */
   readonly mustOpenDoubleSix: boolean;
   /**
@@ -160,6 +167,7 @@ export const DEFAULT_RULES: HouseRules = {
   winBy: 1,
   drawAt: 5,
   blockedByLowestPlayer: true,
+  turnSeconds: 60,
   mustOpenDoubleSix: true,
   doubleSixOpensEveryRound: true,
   openWithAnyDouble: true,

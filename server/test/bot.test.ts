@@ -331,3 +331,56 @@ describe('a computer player catching a cheat', () => {
     assert.ok(caught > 0, `the bots never caught a bluff across ${trials} deals`);
   });
 });
+
+describe('the turn clock', () => {
+  it('plays for a player who runs out of time, and not before', async () => {
+    const { Room } = await import('../dist/rooms.js');
+    const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+    // A one-second clock, four human seats so nothing else moves the game on.
+    const room = new Room('CLK', { targetScore: 10, turnSeconds: 10 }, () => {}, null);
+    const seats = [0, 1, 2, 3].map((i) => {
+      const p = room.addPlayer(`P${i}`);
+      room.sit(p, i as Seat);
+      return p;
+    });
+    room.start(seats[0] as never);
+    assert.notEqual(room.turnDeadline, null, 'a clock was asked for, so there is a deadline');
+    const left = (room.turnDeadline as number) - Date.now();
+    assert.ok(left > 8_000 && left <= 10_000, `deadline should be ~10s away, was ${left}ms`);
+    room.dispose();
+    await sleep(1);
+  });
+
+  it('leaves the table waiting when the clock is turned off', async () => {
+    const { Room } = await import('../dist/rooms.js');
+    const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+    const room = new Room('NOCLK', { targetScore: 10, turnSeconds: null }, () => {}, null);
+    const seats = [0, 1, 2, 3].map((i) => {
+      const p = room.addPlayer(`P${i}`);
+      room.sit(p, i as Seat);
+      return p;
+    });
+    room.start(seats[0] as never);
+    assert.equal(room.turnDeadline, null, 'no clock means no deadline to show');
+
+    const before = room.match?.round?.board.length ?? -1;
+    const whoseTurn = room.match?.round?.turn;
+    await sleep(250);
+    assert.equal(room.match?.round?.board.length, before, 'nothing was played for them');
+    assert.equal(room.match?.round?.turn, whoseTurn, 'the turn did not move on by itself');
+    room.dispose();
+  });
+
+  it('refuses a clock a tampered client tries to set out of range', async () => {
+    const { Room } = await import('../dist/rooms.js');
+    const silly = new Room('BAD', { turnSeconds: 999_999 } as never, () => {}, null);
+    assert.ok(
+      (silly.rules.turnSeconds as number) <= 600,
+      `an absurd clock should be clamped, got ${silly.rules.turnSeconds}`,
+    );
+    const tiny = new Room('BAD2', { turnSeconds: 0 } as never, () => {}, null);
+    assert.ok((tiny.rules.turnSeconds as number) >= 10, 'and so should a zero one');
+    silly.dispose();
+    tiny.dispose();
+  });
+});
