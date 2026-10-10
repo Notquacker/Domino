@@ -102,11 +102,21 @@ export interface HouseRules {
    */
   readonly strictPassing: boolean;
   /**
-   * Points awarded to the opposing team for each pass a player made while
-   * actually holding a playable tile, counted once hands are revealed. Zero
-   * disables the penalty.
+   * Points the clean team takes when a false pass is punished — a pass made
+   * while actually holding a playable tile. Awarded once for the round, not
+   * once per pass, so a player who cheats twice does not hand over double.
+   * Zero disables the penalty.
    */
   readonly falsePassPenalty: number;
+  /**
+   * The teeth behind the penalty: a team caught passing on a playable tile
+   * scores nothing at all for that round, even if one of them went out first.
+   * Winning the round no longer cancels out the penalty.
+   *
+   * With this off, the old behaviour returns — the round scores as normal and
+   * the penalty is simply added on top.
+   */
+  readonly falsePassForfeits: boolean;
   /**
    * When false (the common rule) a winning team scores only the pips left in
    * the two opponents' hands. When true, every unplayed tile on the table
@@ -132,7 +142,8 @@ export const DEFAULT_RULES: HouseRules = {
   mustOpenDoubleSix: true,
   openWithAnyDouble: true,
   strictPassing: false,
-  falsePassPenalty: 1,
+  falsePassPenalty: 2,
+  falsePassForfeits: true,
   countAllRemaining: false,
   capicuPoints: 2,
 };
@@ -192,7 +203,7 @@ export interface RoundState {
 }
 
 export interface RoundResult {
-  readonly kind: 'domino' | 'blocked' | 'tie';
+  readonly kind: 'domino' | 'blocked' | 'tie' | 'calledOut';
   readonly winningTeam: Team | null;
   /** Total points this round moved to each team, penalties included. */
   readonly points: number;
@@ -202,6 +213,18 @@ export interface RoundResult {
   readonly falsePasses: readonly PassRecord[];
   /** Penalty points each team received for the other's false passes. */
   readonly penalties: readonly [number, number];
+  /** Teams that scored nothing this round because they were caught passing. */
+  readonly forfeited: readonly Team[];
+  /**
+   * Set when a player accused someone of passing on a playable tile. A wrong
+   * accusation costs the accuser's own team the round, which is what keeps
+   * calling someone out a risk rather than a free guess.
+   */
+  readonly calledOut: {
+    readonly by: Seat;
+    readonly accused: Seat;
+    readonly correct: boolean;
+  } | null;
   /** Seat that emptied its hand, if the round ended that way. */
   readonly dominoedBy: Seat | null;
   readonly capicu: boolean;
@@ -550,6 +573,135 @@ function legalMovesWouldPass(round: RoundState, seat: Seat): boolean {
   );
 }
 
+/**
+ * Punish the passes that turned out to be false, mutating `awarded` and
+ * `penalties` in place and returning the teams that forfeited the round.
+ *
+ * Under the forfeiting rule a caught team scores nothing at all — the round
+ * win included — and the clean team takes a flat payment instead of the
+ * round's own points. Before this, cheating and then winning cancelled out to
+ * a point each, so cheating cost nothing.
+ *
+ * When both teams were caught, neither scores: there is no clean team left to
+ * pay.
+ */
+/**
+ * Has this seat passed at all this round? Public information — everyone saw
+ * it happen — so it is safe to show in a player's view.
+ */
+export function seatsThatPassed(round: RoundState): Seat[] {
+  const seen: Seat[] = [];
+  for (const p of round.passLog) if (!seen.includes(p.seat)) seen.push(p.seat);
+  return seen;
+}
+
+/**
+ * Accuse a seat of having passed while holding a playable tile.
+ *
+ * This is how a false pass gets punished before the hands come up: play
+ * carries on until somebody works it out and says so. Getting it right ends
+ * the round and takes the points; getting it wrong ends the round and gives
+ * them away, which is the whole risk of opening your mouth.
+ *
+ * Only an opponent may call: accusing your own partner would be a way of
+ * throwing a round you were losing.
+ */
+export function callOut(match: MatchState, by: Seat, accused: Seat): MoveOutcome {
+  const round = match.round;
+  if (round === null || match.phase !== 'playing') {
+    throw new RuleError('no round in progress');
+  }
+  if (by === accused) throw new RuleError('you cannot call yourself out');
+  if (teamOf(by) === teamOf(accused)) {
+    throw new RuleError('you can only call out an opponent');
+  }
+  if (!round.passLog.some((p) => p.seat === accused)) {
+    throw new RuleError('they have not passed this round');
+  }
+
+  const correct = round.passLog.some((p) => p.seat === accused && p.couldHavePlayed);
+  const guilty = correct ? teamOf(accused) : teamOf(by);
+  const clean = (1 - guilty) as Team;
+
+  const remaining = pipsPerSeat(round);
+  const awarded: [number, number] = [0, 0];
+  const penalties: [number, number] = [0, 0];
+  awarded[clean] = match.rules.falsePassPenalty;
+  penalties[clean] = match.rules.falsePassPenalty;
+
+  const scores: [number, number] = [
+    match.scores[0] + awarded[0],
+    match.scores[1] + awarded[1],
+  ];
+
+  const result: RoundResult = {
+    kind: 'calledOut',
+    winningTeam: clean,
+    points: awarded[0] + awarded[1],
+    awarded,
+    falsePasses: round.passLog.filter((p) => p.couldHavePlayed),
+    penalties,
+    forfeited: [guilty],
+    calledOut: { by, accused, correct },
+    dominoedBy: null,
+    capicu: false,
+    remaining,
+    nextStarter: nextStarterFor(round, remaining, {
+      kind: 'calledOut',
+      winningTeam: clean,
+      dominoedBy: null,
+    }),
+  };
+
+  const outcome = matchOutcome(match.rules, scores);
+  return {
+    match: {
+      ...match,
+      round,
+      scores,
+      phase: outcome.over ? 'matchOver' : 'roundOver',
+      lastResult: result,
+      winner: outcome.winner,
+      drawn: outcome.drawn,
+    },
+    result,
+    note: describeResult(result),
+  };
+}
+
+function applyFalsePassPenalty(
+  rules: HouseRules,
+  falsePasses: readonly PassRecord[],
+  awarded: [number, number],
+  penalties: [number, number],
+): Team[] {
+  if (falsePasses.length === 0 || rules.falsePassPenalty <= 0) return [];
+
+  const guilty = ([0, 1] as Team[]).filter((t) =>
+    falsePasses.some((p) => teamOf(p.seat) === t),
+  );
+
+  if (!rules.falsePassForfeits) {
+    // The older, softer rule: one payment per false pass, round still scores.
+    for (const pass of falsePasses) {
+      const opponents = (1 - teamOf(pass.seat)) as Team;
+      penalties[opponents] += rules.falsePassPenalty;
+      awarded[opponents] += rules.falsePassPenalty;
+    }
+    return [];
+  }
+
+  awarded[0] = 0;
+  awarded[1] = 0;
+  for (const team of [0, 1] as Team[]) {
+    if (guilty.includes(team)) continue;
+    if (!guilty.includes((1 - team) as Team)) continue;
+    penalties[team] += rules.falsePassPenalty;
+    awarded[team] += rules.falsePassPenalty;
+  }
+  return guilty;
+}
+
 function finishRound(
   match: MatchState,
   round: RoundState,
@@ -591,17 +743,10 @@ function finishRound(
     }
   }
 
-  // Now the hands are face up, so every pass can be judged. Passing on a
-  // playable tile hands the other team a point, win or lose.
+  // Now the hands are face up, so every pass can be judged.
   const falsePasses = round.passLog.filter((p) => p.couldHavePlayed);
   const penalties: [number, number] = [0, 0];
-  if (rules.falsePassPenalty > 0) {
-    for (const pass of falsePasses) {
-      const opponents = (1 - teamOf(pass.seat)) as Team;
-      penalties[opponents] += rules.falsePassPenalty;
-      awarded[opponents] += rules.falsePassPenalty;
-    }
-  }
+  const forfeited = applyFalsePassPenalty(rules, falsePasses, awarded, penalties);
 
   const nextStarter = nextStarterFor(round, remaining, { kind, winningTeam, dominoedBy });
 
@@ -614,6 +759,8 @@ function finishRound(
     awarded,
     falsePasses,
     penalties,
+    forfeited,
+    calledOut: null,
     dominoedBy,
     capicu: capicuCounts,
     remaining,
@@ -680,10 +827,21 @@ export function matchWinner(
 
 export function describeResult(r: RoundResult): string {
   const parts: string[] = [];
-  if (r.kind === 'tie') {
+  const named = (t: Team): string => (t === 0 ? 'Team A' : 'Team B');
+
+  if (r.kind === 'calledOut') {
+    const call = r.calledOut;
+    if (call !== null) {
+      parts.push(
+        call.correct
+          ? `Seat ${call.by} called out seat ${call.accused} — and was right.`
+          : `Seat ${call.by} called out seat ${call.accused} — and was wrong.`,
+      );
+    }
+  } else if (r.kind === 'tie') {
     parts.push('Round blocked with the teams level — no points for the round.');
   } else {
-    const team = r.winningTeam === 0 ? 'Team A' : 'Team B';
+    const team = named(r.winningTeam === 0 ? 0 : 1);
     const won = r.winningTeam === null ? 0 : r.awarded[r.winningTeam] - r.penalties[r.winningTeam];
     if (r.kind === 'domino') {
       const capicu = r.capicu ? ' with a capicu' : '';
@@ -692,12 +850,18 @@ export function describeResult(r: RoundResult): string {
       parts.push(`Round blocked — ${team} had fewer pips and takes the round (+${won}).`);
     }
   }
-  if (r.falsePasses.length > 0) {
+
+  if (r.forfeited.length > 0) {
+    const lost = r.forfeited.map(named).join(' and ');
+    const also = r.kind === 'domino' ? ', going out or not' : '';
+    parts.push(`${lost} passed on a playable tile and scored nothing${also}.`);
+  }
+  if (r.falsePasses.length > 0 && r.kind !== 'calledOut') {
     const who = r.falsePasses.map((p) => `seat ${p.seat}`).join(', ');
-    parts.push(
-      `Passed holding a playable tile: ${who}. ` +
-        `Penalty — Team A +${r.penalties[0]}, Team B +${r.penalties[1]}.`,
-    );
+    parts.push(`Caught when the hands came up: ${who}.`);
+  }
+  if (r.penalties[0] > 0 || r.penalties[1] > 0) {
+    parts.push(`Penalty — Team A +${r.penalties[0]}, Team B +${r.penalties[1]}.`);
   }
   return parts.join(' ');
 }

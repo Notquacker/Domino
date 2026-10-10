@@ -71,6 +71,8 @@ let error = '';
 let online = false;
 let intent: Intent = { kind: 'idle' };
 let chats: { from: string; text: string }[] = [];
+/** True while the accuse panel is open, so a stray tap cannot cost a round. */
+let accusing = false;
 let name = recall(STORE.name);
 let formCode = new URL(location.href).searchParams.get('code')?.toUpperCase() ?? '';
 let lastBoard: readonly string[] = [];
@@ -1330,12 +1332,52 @@ function renderHand(v: PlayerView): HTMLElement {
       );
     }
     // Passing is always allowed — and always a risk, since passing on a tile
-    // you could have played costs your team a point once hands are shown.
+    // you could have played loses your team the whole round.
     const passBtn = el('button', 'ghost small', 'Pass') as HTMLButtonElement;
     passBtn.addEventListener('click', pass);
     bar.appendChild(passBtn);
   }
+
+  // Calling someone out does not wait for your turn: you say it the moment
+  // you work it out.
+  if (v.phase === 'playing' && v.you !== null) {
+    const suspects = v.passedSeats.filter((seat) => teamOf(seat) !== teamOf(v.you as Seat));
+    if (suspects.length > 0) {
+      const callBtn = el('button', 'ghost small danger', 'Catch a pass') as HTMLButtonElement;
+      callBtn.addEventListener('click', () => {
+        accusing = !accusing;
+        render();
+      });
+      bar.appendChild(callBtn);
+    }
+  }
   if (bar.childNodes.length > 0) zone.appendChild(bar);
+
+  if (accusing && v.phase === 'playing' && v.you !== null) {
+    const panel = el('div', 'accuse');
+    panel.appendChild(
+      el('p', 'hint', 'Who passed when they could have played? Get it right and they lose the round. Get it wrong and YOUR team does.'),
+    );
+    const row = el('div', 'accuserow');
+    for (const seat of v.passedSeats) {
+      if (teamOf(seat) === teamOf(v.you)) continue;
+      const name = v.seats[seat]?.name ?? `Seat ${seat + 1}`;
+      const btn = el('button', 'ghost small', name) as HTMLButtonElement;
+      btn.addEventListener('click', () => {
+        accusing = false;
+        net.send({ t: 'callOut', seat });
+      });
+      row.appendChild(btn);
+    }
+    panel.appendChild(row);
+    const cancel = el('button', 'ghost small', 'Never mind') as HTMLButtonElement;
+    cancel.addEventListener('click', () => {
+      accusing = false;
+      render();
+    });
+    panel.appendChild(cancel);
+    zone.appendChild(panel);
+  }
   return zone;
 }
 
@@ -1398,19 +1440,38 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
     sheet.appendChild(el('div', 'big num', `${v.scores[0]} – ${v.scores[1]}`));
     sheet.appendChild(el('p', undefined, `${TEAM_NAMES[v.winner]} takes it.`));
   } else {
-    sheet.appendChild(el('h2', undefined, 'Round over'));
+    sheet.appendChild(
+      el('h2', undefined, result?.kind === 'calledOut' ? 'Called out' : 'Round over'),
+    );
     if (result !== null) {
       const mineTeam = v.you === null ? null : teamOf(v.you);
       const gained = mineTeam === null ? 0 : result.awarded[mineTeam];
       sheet.appendChild(el('div', 'big num', gained > 0 ? `+${gained}` : '0'));
 
+      const nameOf = (seat: Seat): string => v.seats[seat]?.name ?? `Seat ${seat + 1}`;
+      const call = result.calledOut;
       const who =
-        result.kind === 'tie'
-          ? 'Blocked and level — no point for the round.'
-          : result.kind === 'blocked'
-            ? `Blocked. ${TEAM_NAMES[result.winningTeam ?? 0]} had fewer pips and takes the round.`
-            : `${v.seats[result.dominoedBy ?? 0]?.name ?? 'A player'} went out${result.capicu ? ' with a capicú!' : '.'}`;
+        call !== null
+          ? call.correct
+            ? `${nameOf(call.by)} called out ${nameOf(call.accused)} — and was right.`
+            : `${nameOf(call.by)} called out ${nameOf(call.accused)} — and was wrong.`
+          : result.kind === 'tie'
+            ? 'Blocked and level — no point for the round.'
+            : result.kind === 'blocked'
+              ? `Blocked. ${TEAM_NAMES[result.winningTeam ?? 0]} had fewer pips and takes the round.`
+              : `${nameOf(result.dominoedBy ?? 0)} went out${result.capicu ? ' with a capicú!' : '.'}`;
       sheet.appendChild(el('p', undefined, who));
+
+      // Spell out the forfeit: losing the round despite going out is the one
+      // thing a player will not believe unless it is said plainly.
+      for (const team of result.forfeited) {
+        const line = el('p', 'forfeit');
+        const wentOut = result.dominoedBy !== null && teamOf(result.dominoedBy) === team;
+        line.textContent =
+          `${TEAM_NAMES[team]} passed on a tile they could have played, so they lose the round` +
+          (wentOut ? ' — even though they went out first.' : '.');
+        sheet.appendChild(line);
+      }
 
       // Name anyone caught passing on a tile they could have played.
       if (result.falsePasses.length > 0) {
@@ -1418,9 +1479,8 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
         box.appendChild(el('h3', undefined, 'Caught passing'));
         for (const fp of result.falsePasses) {
           const row = el('div');
-          const name = v.seats[fp.seat]?.name ?? `Seat ${fp.seat + 1}`;
-          row.appendChild(el('span', undefined, `${name} had a tile that fitted`));
-          row.appendChild(el('span', 'cost', `+1 ${TEAM_NAMES[(1 - teamOf(fp.seat)) as 0 | 1]}`));
+          row.appendChild(el('span', undefined, `${nameOf(fp.seat)} had a tile that fitted`));
+          row.appendChild(el('span', 'cost', TEAM_NAMES[teamOf(fp.seat)]));
           box.appendChild(row);
         }
         sheet.appendChild(box);

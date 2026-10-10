@@ -35,6 +35,7 @@ function contextFor(round: RoundState, seat: Seat, voids: Pip[][]): BotContext {
     ends: openEnds(round.board),
     tilesLeft: SEATS.map((s) => (round.hands[s] ?? []).length),
     voids: voids.map((v) => [...v]),
+    caught: [],
     rules: DEFAULT_RULES,
   };
 }
@@ -250,5 +251,83 @@ describe('what a bot table does to the record books', () => {
 
     play(false);
     assert.equal(writes.length, 1, 'an all-human match should still be recorded');
+  });
+});
+
+describe('a computer player catching a cheat', () => {
+  it('proves a false pass from public play alone', async () => {
+    const { provenFalsePass, shouldCallOut } = await import('../dist/bot.js');
+    // They passed while 2 and 5 were the open ends, then laid a tile with a 2.
+    // The whole set is dealt and there is no boneyard, so they were holding it.
+    assert.equal(provenFalsePass('2-6', [2, 5]), true);
+    assert.equal(provenFalsePass('3-4', [2, 5]), false, 'an unrelated tile proves nothing');
+    assert.equal(provenFalsePass('2-6', []), false, 'they never passed, so nothing to prove');
+
+    const base = {
+      seat: 0 as Seat,
+      hand: ['1-1'],
+      board: [],
+      ends: null,
+      tilesLeft: [1, 1, 1, 1],
+      voids: [[], [], [], []],
+      rules: DEFAULT_RULES,
+    };
+    assert.equal(shouldCallOut({ ...base, caught: [1] }), 1, 'calls out an opponent');
+    assert.equal(shouldCallOut({ ...base, caught: [2] }), null, 'never its own partner');
+    assert.equal(shouldCallOut({ ...base, caught: [] }), null, 'never on a hunch');
+  });
+
+  it('catches a cheat at a real table and takes the round', async () => {
+    const { Room } = await import('../dist/rooms.js');
+    const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+    // Run a few deals: the human bluffs once, then lays the very tile they
+    // bluffed on, which is what makes the pass provable from the table alone.
+    // Whether that chance comes up depends on the deal, so try more than one.
+    let caught = 0;
+    let bluffs = 0;
+    const trials = 4;
+
+    for (let t = 0; t < trials; t++) {
+      const room = new Room('T' + t, { targetScore: 10 }, () => {}, null, 1);
+      const host = room.addPlayer('Ana');
+      room.sit(host, 0);
+      for (let i = 0; i < 3; i++) room.addBot(host);
+      room.start(host);
+
+      let bluffed: string | null = null;
+      for (let tick = 0; tick < 4000; tick++) {
+        const match = room.match;
+        if (match === null || match.phase !== 'playing' || match.round === null) break;
+        if (match.round.turn !== 0) {
+          await sleep(2);
+          continue;
+        }
+        const moves = legalMoves(match.round, 0);
+        const plays = moves.filter((m): m is Extract<Move, { kind: 'play' }> => m.kind === 'play');
+        if (bluffed === null && match.round.board.length > 0 && plays.length > 0) {
+          bluffed = (plays[0] as Extract<Move, { kind: 'play' }>).tile;
+          room.move(host, { kind: 'pass' });
+          continue;
+        }
+        const giveaway = plays.find((m) => m.tile === bluffed);
+        room.move(host, (giveaway ?? plays[0] ?? { kind: 'pass' }) as Move);
+      }
+
+      const result = room.match?.lastResult ?? null;
+      room.dispose();
+      if (bluffed !== null) bluffs++;
+      if (result?.kind !== 'calledOut') continue;
+
+      caught++;
+      assert.equal(result.calledOut?.correct, true, 'the accusation must be a right one');
+      assert.equal(result.calledOut?.accused, 0, 'the bluffer is the one accused');
+      assert.notEqual(result.calledOut?.by, 2, 'a partner must never be the accuser');
+      assert.deepEqual(result.forfeited, [0], 'the cheating team loses the round');
+      assert.deepEqual(result.awarded, [0, DEFAULT_RULES.falsePassPenalty]);
+    }
+
+    assert.ok(bluffs > 0, 'the human seat never got a chance to bluff');
+    assert.ok(caught > 0, `the bots never caught a bluff across ${trials} deals`);
   });
 });

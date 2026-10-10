@@ -314,5 +314,11 @@ body.shaking { animation: shake .62s cubic-bezier(.36,.07,.19,.97); }
   .chain .tile.v { width: calc(45px * var(--tile-scale, 1)); height: calc(88px * var(--tile-scale, 1)); }
   .chain .pip { max-width: calc(9px * var(--tile-scale, 1)); }
 }
+.danger { border-color: #e2795c66; color: #e9937b; }
+.accuse { margin-top: 10px; padding: 12px; border-radius: 12px;
+  border: 1px solid #e2795c55; background: #e2795c14; }
+.accuse .hint { margin: 0 0 10px; text-align: left; }
+.accuserow { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.forfeit { color: #e9937b; font-weight: 600; }
 </style>
 <div id="app"></div>

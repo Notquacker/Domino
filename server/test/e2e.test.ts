@@ -457,3 +457,83 @@ describe('a table filled with computer players', () => {
     solo.close();
   });
 });
+
+/** Calling someone out, over the wire. */
+describe('catching a false pass across four connections', () => {
+  const clients = [0, 1, 2, 3].map((i) => new TestClient(`c${i}`));
+
+  it('ends the round on a correct accusation and takes the points', async () => {
+    for (const client of clients) await client.open();
+    const host = clients[0]!;
+    host.send({ t: 'create', name: 'Ana', rules: { targetScore: 10 } });
+    await host.until(() => host.view !== null, 'the table');
+    const code = host.code;
+    for (let i = 1; i < 4; i++) {
+      clients[i]!.send({ t: 'join', code, name: `P${i}` });
+      await clients[i]!.until(() => clients[i]!.view !== null, 'to join');
+    }
+    for (let i = 0; i < 4; i++) {
+      clients[i]!.send({ t: 'sit', seat: i as 0 | 1 | 2 | 3 });
+      await clients[i]!.until(() => clients[i]!.view!.you === i, 'a seat');
+    }
+    host.send({ t: 'start' });
+    await host.until(() => host.view!.phase === 'playing', 'the match');
+
+    // Play on until somebody bluffs: a player passes although their own hand
+    // answers an open end. Only they can know that, which is the point.
+    let bluffer: number | null = null;
+    for (let guard = 0; guard < 200 && bluffer === null; guard++) {
+      const onTurn = clients.find((c) => c.view!.youMayMove);
+      if (onTurn === undefined) {
+        await new Promise((r) => setTimeout(r, 30));
+        continue;
+      }
+      const v = onTurn.view!;
+      const move = chooseMove(v);
+      if (move === null) break;
+      if (move.kind === 'play' && v.board.length > 0) {
+        bluffer = v.you;
+        onTurn.send({ t: 'move', move: { kind: 'pass' } });
+      } else {
+        onTurn.send({ t: 'move', move });
+      }
+      await onTurn.until(() => !onTurn.view!.youMayMove, 'the move to land', 20_000);
+    }
+    assert.notEqual(bluffer, null, 'nobody ever had a chance to bluff');
+
+    // Everyone can see WHO passed. Whether it was false is still hidden.
+    await host.until(
+      () => host.view!.passedSeats.includes(bluffer as 0 | 1 | 2 | 3),
+      'the pass to show up publicly',
+    );
+    for (const client of clients) {
+      const raw = JSON.stringify(client.view);
+      assert.ok(!raw.includes('couldHavePlayed'), 'a view leaked whether a pass was false');
+    }
+
+    const accuser = clients.find((c) => c.view!.you !== null && c.view!.you! % 2 !== bluffer! % 2)!;
+    accuser.errors = [];
+    accuser.send({ t: 'callOut', seat: bluffer as 0 | 1 | 2 | 3 });
+    await accuser.until(() => accuser.view!.phase !== 'playing', 'the round to end', 20_000);
+
+    const result = accuser.view!.lastResult!;
+    assert.equal(result.kind, 'calledOut');
+    assert.equal(result.calledOut!.correct, true, 'the accusation was right');
+    assert.equal(result.calledOut!.accused, bluffer);
+    const guilty = (bluffer! % 2) as 0 | 1;
+    assert.deepEqual(result.forfeited, [guilty], 'the bluffing team forfeits');
+    assert.equal(result.awarded[guilty], 0, 'and scores nothing');
+    assert.equal(result.awarded[1 - guilty], 2, 'the other team takes 2');
+
+    // Wait for every client's own frame before comparing: the accuser's
+    // arrives first, and asserting on the others straight away just races it.
+    for (const client of clients) {
+      await client.until(() => client.view!.phase !== 'playing', 'its own round-over frame', 20_000);
+    }
+    for (const client of clients) {
+      assert.deepEqual(client.view!.scores, accuser.view!.scores, 'all four agree on the score');
+      assert.equal(client.view!.lastResult!.kind, 'calledOut');
+      client.close();
+    }
+  });
+});

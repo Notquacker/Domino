@@ -17,7 +17,8 @@
       mustOpenDoubleSix: true,
       openWithAnyDouble: true,
       strictPassing: false,
-      falsePassPenalty: 1,
+      falsePassPenalty: 2,
+      falsePassForfeits: true,
       countAllRemaining: false,
       capicuPoints: 2
     },
@@ -29,6 +30,7 @@
     dragOver: null,
     layout: 'snake',
     messy: false,
+    accusing: false,
     smashed: false,
     banner: null
   };
@@ -207,8 +209,20 @@
       setTimeout(function () { S.refused = null; render(); }, 600);
     }
   }
+  /** Accuse an opponent of having passed on a playable tile. Ends the round. */
+  function accuse(by, seat) {
+    try {
+      S.match = D.callOut(S.match, by, seat).match;
+      afterMove();
+    } catch (e) {
+      S.accusing = false;
+      render();
+    }
+  }
+
   function deal() {
     clearDrag();
+    S.accusing = false;
     S.match = D.newMatch(S.rules, Math.random);
     S.messy = false;
     S.smashed = false;
@@ -290,7 +304,8 @@
       return box;
     }
     toggle('drawline', 'Draw once both teams reach 5', 'drawAt', 5);
-    toggle('falsepass', 'Point against a false pass', 'falsePassPenalty', 1);
+    toggle('falsepass', 'Punish a false pass', 'falsePassPenalty', 2);
+    toggle('forfeit', 'A false pass loses the whole round', 'falsePassForfeits');
     toggle('capicu', 'Capicú counts double', 'capicuPoints', 2);
     toggle('double6', 'First round opens with the 6-6', 'mustOpenDoubleSix');
     toggle('anydouble', 'The 6-6 holder may open with any double', 'openWithAnyDouble');
@@ -663,8 +678,37 @@
       if (S.refused === 'pass') p.className += ' refused';
       p.addEventListener('click', pass);
       bar.appendChild(p);
+
+      // Calling someone out does not wait for your turn.
+      var me = turn();
+      var suspects = D.seatsThatPassed(round()).filter(function (seat) {
+        return D.teamOf(seat) !== D.teamOf(me);
+      });
+      if (suspects.length) {
+        var cb = el('button', 'ghost small danger', 'Catch a pass');
+        cb.addEventListener('click', function () { S.accusing = !S.accusing; render(); });
+        bar.appendChild(cb);
+      }
     }
     if (bar.childNodes.length) zone.appendChild(bar);
+
+    if (S.accusing && playing()) {
+      var me2 = turn();
+      var panel = el('div', 'accuse');
+      panel.appendChild(el('p', 'hint', 'Who passed when they could have played? Right and they lose the round. Wrong and YOUR team does.'));
+      var row2 = el('div', 'accuserow');
+      D.seatsThatPassed(round()).forEach(function (seat) {
+        if (D.teamOf(seat) === D.teamOf(me2)) return;
+        var b = el('button', 'ghost small', S.names[seat] || 'Seat ' + (seat + 1));
+        b.addEventListener('click', function () { S.accusing = false; accuse(me2, seat); });
+        row2.appendChild(b);
+      });
+      panel.appendChild(row2);
+      var nv = el('button', 'ghost small', 'Never mind');
+      nv.addEventListener('click', function () { S.accusing = false; render(); });
+      panel.appendChild(nv);
+      zone.appendChild(panel);
+    }
     return zone;
   }
 
@@ -687,7 +731,8 @@
       card.appendChild(el('h2', null, names + ' take the match'));
       card.appendChild(el('div', 'big num', S.match.scores[0] + ' – ' + S.match.scores[1]));
     } else {
-      var head = r.kind === 'tie' ? 'Blocked, and level'
+      var head = r.kind === 'calledOut' ? 'Called out'
+        : r.kind === 'tie' ? 'Blocked, and level'
         : r.kind === 'blocked' ? 'Blocked' : (S.names[r.dominoedBy] || 'A player') + ' went out';
       card.appendChild(el('h2', null, head + (r.capicu ? ' — capicú!' : '')));
       // r.points is the total that moved across BOTH teams, which reads as a
@@ -700,10 +745,24 @@
       if (gotA > 0 && gotB > 0) {
         card.appendChild(el('p', null, TEAMS[0] + ' +' + gotA + ' · ' + TEAMS[1] + ' +' + gotB));
       }
-      var why = r.kind === 'tie' ? 'The teams held equal pips, so nobody takes the round.'
-        : r.kind === 'blocked' ? TEAMS[r.winningTeam] + ' held fewer pips and takes the round.'
-        : TEAMS[r.winningTeam] + ' takes the round.';
+      var nameOf = function (seat) { return S.names[seat] || 'Seat ' + (seat + 1); };
+      var why;
+      if (r.calledOut) {
+        why = nameOf(r.calledOut.by) + ' called out ' + nameOf(r.calledOut.accused) +
+          (r.calledOut.correct ? ' — and was right.' : ' — and was wrong.');
+      } else {
+        why = r.kind === 'tie' ? 'The teams held equal pips, so nobody takes the round.'
+          : r.kind === 'blocked' ? TEAMS[r.winningTeam] + ' held fewer pips and takes the round.'
+          : TEAMS[r.winningTeam] + ' takes the round.';
+      }
       card.appendChild(el('p', null, why));
+
+      (r.forfeited || []).forEach(function (team) {
+        var wentOut = r.dominoedBy !== null && D.teamOf(r.dominoedBy) === team;
+        card.appendChild(el('p', 'forfeit', TEAMS[team] +
+          ' passed on a tile they could have played, so they lose the round' +
+          (wentOut ? ' — even though they went out first.' : '.')));
+      });
 
       // Anyone who passed holding a tile that would have fitted.
       if (r.falsePasses && r.falsePasses.length) {
@@ -713,7 +772,7 @@
           var row = el('div');
           row.appendChild(el('span', null,
             (S.names[fp.seat] || 'Seat ' + (fp.seat + 1)) + ' had a tile that fitted'));
-          row.appendChild(el('span', 'cost', '+1 ' + TEAMS[1 - D.teamOf(fp.seat)]));
+          row.appendChild(el('span', 'cost', TEAMS[D.teamOf(fp.seat)]));
           box.appendChild(row);
         });
         card.appendChild(box);

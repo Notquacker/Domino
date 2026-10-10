@@ -280,6 +280,10 @@ async function handle(socket: WebSocket, session: Session, msg: ClientMessage): 
       room.rematch(player);
       room.broadcastState();
       return;
+    case 'callOut':
+      room.callOut(player, parseSeat(msg.seat));
+      room.broadcastState();
+      return;
     case 'smash':
       room.smash(player);
       room.broadcastState();

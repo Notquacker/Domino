@@ -22,9 +22,21 @@ Curaçao-style partnership dominoes:
   you are actually choosing. On the opening lead, where there is nothing to
   choose between, the whole table is one target.
 - **Passing is a choice.** You may pass at any time, even holding a playable
-  tile. But every pass is recorded, and when hands are revealed at the end of
-  the round, **a pass made on a tile you could have played gives the other
-  team a point**. Bluff at your own risk.
+  tile. But a pass made on a tile you could have played **loses your team the
+  whole round** — you score nothing, even if you went out first, and the other
+  team takes 2 points. Bluff at your own risk.
+- **You can call someone out.** Play carries on; nobody is stopped mid-round.
+  Any player may hit **Catch a pass** at any moment and name an opponent who
+  passed. Right, and that team loses the round there and then. Wrong, and your
+  own team does. If nobody ever says anything, the hands come up at the end of
+  the round and a false pass is caught anyway — calling it out early just ends
+  the round on your terms.
+
+  Who passed is public; whether a pass was *false* is not. A computer player
+  only ever accuses on proof: with the whole set dealt and no boneyard, a
+  player who passes while a 2 is on an end and later lays a tile with a 2 on it
+  must have been holding it at the time. Nobody has to see their hand to
+  know.
 - **Somebody has to lead**, so the opening tile cannot be passed.
 - **The 6-6 decides who leads the first round** of a match. By default that
   player may open with **any double they like**, not necessarily the 6-6

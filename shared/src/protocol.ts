@@ -39,6 +39,12 @@ export interface PlayerView {
   readonly openerTile: TileId | null;
   readonly ends: { readonly left: Pip; readonly right: Pip } | null;
   readonly turn: Seat | null;
+  /**
+   * Seats that have passed at least once this round. Public — everyone saw it
+   * happen — and it is what you pick from when calling someone out. Whether a
+   * pass was false stays hidden until it is punished.
+   */
+  readonly passedSeats: readonly Seat[];
   readonly scores: readonly [number, number];
   readonly roundNumber: number;
   /**
@@ -86,6 +92,8 @@ export type ClientMessage =
   | { readonly t: 'chat'; readonly text: string }
   /** Slam the table after taking a round with a capicú. */
   | { readonly t: 'smash' }
+  /** Accuse an opponent of having passed while holding a playable tile. */
+  | { readonly t: 'callOut'; readonly seat: Seat }
   | { readonly t: 'ping' };
 
 export type ServerMessage =

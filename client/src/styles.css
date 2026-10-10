@@ -537,3 +537,16 @@ body.shaking { animation: shake 0.62s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
 
 /* The opening lead: one target covering the table, since there is no choice. */
 .dropzone.lead { left: 0; width: 100%; border-radius: 12px; }
+
+/* Calling someone out is a gamble, so it does not look like the other buttons. */
+.danger { border-color: #e2795c66; color: #e9937b; }
+.accuse {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #e2795c55;
+  background: #e2795c14;
+}
+.accuse .hint { margin: 0 0 10px; text-align: left; }
+.accuserow { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.forfeit { color: #e9937b; font-weight: 600; }

@@ -26,6 +26,8 @@ import {
   startNextRound,
   teamOf,
   tilePips,
+  callOut,
+  seatsThatPassed,
 } from '../dist/index.js';
 
 const rules = (over: Partial<HouseRules> = {}): HouseRules => ({ ...PIP_RULES, ...over });
@@ -594,12 +596,14 @@ describe('punishing a false pass', () => {
     assert.ok(result, 'four passes end the round');
     assert.equal(result!.falsePasses.length, 1);
     assert.equal(result!.falsePasses[0]!.seat, 1);
-    // Seat 1 is Team B, so Team A collects the penalty.
-    assert.deepEqual(result!.penalties, [1, 0]);
-    assert.equal(state.scores[0] >= 1, true, 'Team A is up on the penalty');
+    // Seat 1 is Team B, so Team B forfeits and Team A takes the payment.
+    assert.deepEqual(result!.forfeited, [1]);
+    assert.deepEqual(result!.penalties, [2, 0]);
+    assert.deepEqual(result!.awarded, [2, 0], 'the caught team scores nothing');
+    assert.deepEqual(state.scores, [2, 0]);
   });
 
-  it('charges a point for every false pass, not just the first', () => {
+  it('charges once for the round however many false passes a team made', () => {
     const board = placeTile([], '0-0', 'right');
     // Seats 1 and 3 (both Team B) each pass holding a playable tile.
     const { result } = playOut(
@@ -613,10 +617,15 @@ describe('punishing a false pass', () => {
       ],
     );
     assert.equal(result!.falsePasses.length, 2);
-    assert.deepEqual(result!.penalties, [2, 0], 'two points to Team A');
+    assert.deepEqual(
+      result!.penalties,
+      [2, 0],
+      'one payment for the round, not one per pass — cheating twice is not worth double',
+    );
+    assert.deepEqual(result!.forfeited, [1]);
   });
 
-  it('charges each team for its own false passes', () => {
+  it('lets nobody score when both teams were caught', () => {
     const board = placeTile([], '0-0', 'right');
     // Seat 0 (Team A) and seat 1 (Team B) both bluff.
     const { result } = playOut(
@@ -630,7 +639,9 @@ describe('punishing a false pass', () => {
       ],
     );
     assert.equal(result!.falsePasses.length, 2);
-    assert.deepEqual(result!.penalties, [1, 1], 'one each, both ways');
+    assert.deepEqual(result!.forfeited, [0, 1], 'both sides caught');
+    assert.deepEqual(result!.awarded, [0, 0], 'no clean team left to pay');
+    assert.deepEqual(result!.penalties, [0, 0]);
   });
 
   it('charges nothing when every pass was honest', () => {
@@ -664,7 +675,46 @@ describe('punishing a false pass', () => {
     );
     // All four passed, so the round is blocked; seat 0's bluff still costs.
     assert.equal(result!.falsePasses.some((p) => p.seat === 0), true);
-    assert.equal(result!.penalties[1], 1, 'Team B collects for seat 0');
+    assert.equal(result!.penalties[1], 2, 'Team B collects for seat 0');
+    assert.equal(result!.awarded[0], 0, 'Team A gets nothing at all');
+  });
+
+  it('takes the round off a team that cheated and then went out first', () => {
+    // The case that started this: seat 0 passes on a tile that fitted, then
+    // empties their hand anyway. Winning the round used to cancel the penalty
+    // out to a point each, so cheating cost nothing.
+    const board = placeTile([], '3-3', 'right');
+    const { state, result } = playOut(
+      [['3-5', '5-5'], ['6-6'], ['0-1'], ['4-4']],
+      board,
+      [
+        [0, { kind: 'pass' }],
+        [1, { kind: 'pass' }],
+        [2, { kind: 'pass' }],
+        [3, { kind: 'pass' }],
+      ],
+    );
+    assert.ok(result, 'the round ended');
+    assert.equal(result!.falsePasses.some((p) => p.seat === 0), true);
+    assert.deepEqual(result!.awarded, [0, 2], 'Team A forfeits, Team B takes 2');
+    assert.deepEqual(state.scores, [0, 2]);
+  });
+
+  it('can go back to the old soft rule', () => {
+    const board = placeTile([], '0-0', 'right');
+    const { result } = playOut(
+      [['1-2'], ['0-6'], ['3-4'], ['5-5']],
+      board,
+      [
+        [0, { kind: 'pass' }],
+        [1, { kind: 'pass' }],
+        [2, { kind: 'pass' }],
+        [3, { kind: 'pass' }],
+      ],
+      { falsePassForfeits: false, falsePassPenalty: 1 },
+    );
+    assert.deepEqual(result!.forfeited, [], 'nobody forfeits');
+    assert.deepEqual(result!.penalties, [1, 0], 'just the old point');
   });
 
   it('can be switched off', () => {
@@ -682,6 +732,68 @@ describe('punishing a false pass', () => {
     );
     assert.equal(result!.falsePasses.length, 1, 'still reported');
     assert.deepEqual(result!.penalties, [0, 0], 'but costs nothing');
+  });
+});
+
+describe('calling someone out', () => {
+  /** A round where seat 1 has passed on a 0 they could have played. */
+  function afterABluff() {
+    const board = placeTile([], '0-0', 'right');
+    let state = match(round({ hands: [['1-2', '2-3'], ['0-6', '6-6'], ['3-4', '4-5'], ['5-5', '1-5']], board }), {
+      rules: roundRules(),
+    });
+    state = applyMove(state, 0, { kind: 'pass' }).match;   // honest
+    state = applyMove(state, 1, { kind: 'pass' }).match;   // held the 0-6
+    return state;
+  }
+
+  it('ends the round and pays the caller when the accusation is right', () => {
+    const state = afterABluff();
+    const out = callOut(state, 2, 1);
+    assert.equal(out.result!.kind, 'calledOut');
+    assert.deepEqual(out.result!.calledOut, { by: 2, accused: 1, correct: true });
+    assert.deepEqual(out.result!.forfeited, [1], 'the accused team loses the round');
+    assert.deepEqual(out.result!.awarded, [2, 0], 'the caller team takes 2');
+    assert.equal(out.match.phase, 'roundOver');
+  });
+
+  it('costs the caller the round when the accusation is wrong', () => {
+    const state = afterABluff();
+    // Seat 0 passed honestly, so accusing them backfires on the accuser.
+    const out = callOut(state, 1, 0);
+    assert.equal(out.result!.calledOut!.correct, false);
+    assert.deepEqual(out.result!.forfeited, [1], 'the accuser team pays instead');
+    assert.deepEqual(out.result!.awarded, [2, 0]);
+  });
+
+  it('refuses an accusation against your own partner', () => {
+    const state = afterABluff();
+    assert.throws(() => callOut(state, 3, 1), /only call out an opponent/);
+    assert.throws(() => callOut(state, 1, 1), /cannot call yourself/);
+  });
+
+  it('refuses an accusation against someone who has not passed', () => {
+    const state = afterABluff();
+    assert.throws(() => callOut(state, 1, 2), /not passed this round/);
+  });
+
+  it('is not allowed once the round is over', () => {
+    const board = placeTile([], '3-3', 'right');
+    const m = match(round({ hands: [['3-5'], ['6-6'], ['0-1'], ['4-4']], board }), {
+      rules: roundRules(),
+    });
+    const ended = applyMove(m, 0, { kind: 'play', tile: '3-5', end: 'right' }).match;
+    assert.equal(ended.phase !== 'playing', true);
+    assert.throws(() => callOut(ended, 1, 0), /no round in progress/);
+  });
+
+  it('keeps who passed public but whether it was false hidden', () => {
+    const state = afterABluff();
+    // Both passes are on the record for everyone; only the engine knows which
+    // of them was a bluff.
+    assert.deepEqual(seatsThatPassed(state.round!), [0, 1]);
+    const leaked = JSON.stringify(seatsThatPassed(state.round!));
+    assert.equal(leaked.includes('couldHavePlayed'), false);
   });
 });
 

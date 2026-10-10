@@ -9,7 +9,7 @@
 
 import { randomBytes, randomInt } from 'node:crypto';
 import type { AuthedUser, MatchPlayerRecord, MatchRecord, Supabase } from './supabase.js';
-import { type BotContext, BOT_NAMES, chooseMove } from './bot.js';
+import { type BotContext, BOT_NAMES, chooseMove, provenFalsePass, shouldCallOut } from './bot.js';
 import {
   type HouseRules,
   type MatchState,
@@ -26,14 +26,17 @@ import {
   RuleError,
   SEATS,
   applyMove,
+  callOut,
   describeResult,
   legalMoves,
   newMatch,
   openEnds,
+  seatsThatPassed,
   seededRng,
   startNextRound,
   teamName,
   teamOf,
+  tileHas,
 } from '@domino/shared';
 
 /** Seconds a player has to move before the server plays for them. */
@@ -130,6 +133,7 @@ function mergeRules(partial: Partial<HouseRules> | undefined): HouseRules {
     openWithAnyDouble: bool(partial.openWithAnyDouble, base.openWithAnyDouble),
     strictPassing: bool(partial.strictPassing, base.strictPassing),
     falsePassPenalty: clampInt(partial.falsePassPenalty, 0, 10, base.falsePassPenalty),
+    falsePassForfeits: bool(partial.falsePassForfeits, base.falsePassForfeits),
     countAllRemaining: bool(partial.countAllRemaining, base.countAllRemaining),
     capicuPoints: clampInt(partial.capicuPoints, 0, 50, base.capicuPoints),
   };
@@ -157,6 +161,13 @@ export class Room {
    * player read the game instead of guessing.
    */
   private voids: Pip[][] = [[], [], [], []];
+  /**
+   * Seats proven to have passed on a playable tile, from public play alone:
+   * they passed while a pip was on an end, then later laid a tile carrying
+   * that pip. With the whole set dealt and no boneyard, they must have been
+   * holding it at the time.
+   */
+  private caught = new Set<Seat>();
   private botTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -164,6 +175,8 @@ export class Room {
     rules: Partial<HouseRules> | undefined,
     private send: Broadcast,
     private supabase: Supabase | null = null,
+    /** Overridable so tests do not have to sit through the thinking pause. */
+    private thinkMs: number = BOT_THINK_MS,
   ) {
     this.code = code;
     this.rules = mergeRules(rules);
@@ -287,6 +300,7 @@ export class Room {
       `Match to ${this.rules.targetScore}. ${this.seatLabel(this.match.round?.turn ?? 0)} opens.`,
     );
     this.voids = [[], [], [], []];
+    this.caught.clear();
     this.armTimer();
     this.scheduleBot();
   }
@@ -295,7 +309,7 @@ export class Room {
     const match = this.match;
     if (match === null) throw new RuleError('the match has not started');
     if (player.seat === null) throw new RuleError('you are watching, not playing');
-    this.notePass(player.seat, move);
+    this.noteMove(player.seat, move);
     const outcome = applyMove(match, player.seat, move);
     this.match = outcome.match;
     if (outcome.result !== null) this.smashedThisRound = false;
@@ -317,6 +331,7 @@ export class Room {
       `Round ${this.match.roundNumber}. ${this.seatLabel(this.match.round?.turn ?? 0)} opens.`,
     );
     this.voids = [[], [], [], []];
+    this.caught.clear();
     this.armTimer();
     this.scheduleBot();
   }
@@ -333,6 +348,7 @@ export class Room {
     this.log = [];
     this.pushLog(`Rematch to ${this.rules.targetScore}.`);
     this.voids = [[], [], [], []];
+    this.caught.clear();
     this.armTimer();
     this.scheduleBot();
   }
@@ -348,6 +364,24 @@ export class Room {
   }
 
   /** Slam the table. Earned only by taking the round with a capicú. */
+  /** Accuse an opponent of passing on a playable tile. Ends the round. */
+  callOut(player: Player, accused: Seat): void {
+    const match = this.match;
+    if (match === null) throw new RuleError('the match has not started');
+    if (player.seat === null) throw new RuleError('you are watching, not playing');
+    const outcome = callOut(match, player.seat, accused);
+    this.match = outcome.match;
+    this.smashedThisRound = false;
+    this.pushLog(
+      `${player.name} called out ${this.seatLabel(accused)} — ` +
+        `${outcome.result?.calledOut?.correct ? 'and was right!' : 'and was wrong.'}`,
+    );
+    if (outcome.result !== null) this.pushLog(this.describeRoundResult(outcome.result));
+    this.armTimer();
+    this.scheduleBot();
+    this.maybeRecord();
+  }
+
   smash(player: Player): void {
     if (!this.maySmash(player.seat)) {
       throw new RuleError('a smash is earned by taking the round with a capicú');
@@ -365,12 +399,20 @@ export class Room {
    * open ends are still the ones the player failed to match, so everyone at
    * the table learns they hold neither pip.
    */
-  private notePass(seat: Seat, move: Move): void {
-    if (move.kind !== 'pass') return;
-    const ends = openEnds(this.match?.round?.board ?? []);
-    if (ends === null) return;
+  private noteMove(seat: Seat, move: Move): void {
     const known = this.voids[seat] as Pip[];
-    for (const pip of [ends.left, ends.right]) if (!known.includes(pip)) known.push(pip);
+    if (move.kind === 'pass') {
+      const ends = openEnds(this.match?.round?.board ?? []);
+      if (ends === null) return;
+      for (const pip of [ends.left, ends.right]) if (!known.includes(pip)) known.push(pip);
+      return;
+    }
+    // They are laying a tile they claimed not to have. Caught in the open.
+    if (provenFalsePass(move.tile, known)) {
+      this.caught.add(seat);
+      // The void was a lie, so stop reasoning from it.
+      this.voids[seat] = known.filter((pip) => !tileHas(move.tile, pip));
+    }
   }
 
   /**
@@ -389,6 +431,7 @@ export class Room {
       ends: openEnds(round.board),
       tilesLeft: SEATS.map((s) => (round.hands[s] ?? []).length),
       voids: this.voids.map((v) => [...v]),
+      caught: [...this.caught],
       rules: this.rules,
     };
   }
@@ -409,7 +452,7 @@ export class Room {
       this.botTimer = setTimeout(() => {
         this.botTimer = null;
         this.playBotTurn();
-      }, BOT_THINK_MS);
+      }, this.thinkMs);
       return;
     }
 
@@ -426,7 +469,7 @@ export class Room {
           return;
         }
         this.broadcastState();
-      }, BOT_THINK_MS * 2);
+      }, this.thinkMs * 2);
     }
   }
 
@@ -439,11 +482,22 @@ export class Room {
 
     const ctx = this.contextFor(seat);
     if (ctx === null) return;
+
+    const accuse = shouldCallOut(ctx);
+    if (accuse !== null) {
+      try {
+        this.callOut(bot, accuse);
+      } catch {
+        return;
+      }
+      this.broadcastState();
+      return;
+    }
     // legalMoves reads only this seat's own hand, so its result carries
     // nothing the bot is not already entitled to.
     const choice = chooseMove(legalMoves(match.round, seat), ctx, 1.5);
     try {
-      this.notePass(seat, choice);
+      this.noteMove(seat, choice);
       const outcome = applyMove(match, seat, choice);
       this.match = outcome.match;
       if (outcome.result !== null) this.smashedThisRound = false;
@@ -470,7 +524,7 @@ export class Room {
     const moves = legalMoves(match.round, seat);
     const choice: Move = moves[0] ?? { kind: 'pass' };
     try {
-      this.notePass(seat, choice);
+      this.noteMove(seat, choice);
       const outcome = applyMove(match, seat, choice);
       this.match = outcome.match;
       this.pushLog(
@@ -624,6 +678,7 @@ export class Room {
       openerTile: round?.openerTile ?? null,
       ends: round === null ? null : openEnds(round.board),
       turn: match?.phase === 'playing' ? (round?.turn ?? null) : null,
+      passedSeats: round === null ? [] : seatsThatPassed(round),
       scores: match?.scores ?? [0, 0],
       roundNumber: match?.roundNumber ?? 0,
       youMayMove: canAct,

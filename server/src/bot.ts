@@ -42,7 +42,37 @@ export interface BotContext {
    * everyone to see. Tracking it is ordinary good play, not peeking.
    */
   readonly voids: readonly (readonly Pip[])[];
+  /**
+   * Seats proven to have passed on a playable tile, from public play alone —
+   * see `provenFalsePass`. Not a guess and not a peek at anyone's hand.
+   */
+  readonly caught: readonly Seat[];
   readonly rules: HouseRules;
+}
+
+/**
+ * Does playing this tile prove the seat's earlier pass was false?
+ *
+ * The whole set is dealt and there is no boneyard, so a player holds every
+ * tile they will ever hold from the moment of the deal. If they passed while
+ * the ends showed 2 and 5, and later lay a tile with a 2 on it, they must
+ * have been holding that tile when they passed — and a 2 was sitting right
+ * there. Nobody had to see their hand to know it.
+ */
+export function provenFalsePass(tile: TileId, passedOn: readonly Pip[]): boolean {
+  return passedOn.some((pip) => tileHas(tile, pip));
+}
+
+/**
+ * Which opponent, if any, this bot should call out. It only ever accuses on
+ * proof: a wrong accusation costs its own team the round, so guessing is
+ * worse than saying nothing.
+ */
+export function shouldCallOut(ctx: BotContext): Seat | null {
+  for (const seat of ctx.caught) {
+    if (teamOf(seat) !== teamOf(ctx.seat)) return seat;
+  }
+  return null;
 }
 
 /** Where the ends land if this tile goes down on this side. */
