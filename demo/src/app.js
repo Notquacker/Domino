@@ -17,6 +17,7 @@
       mustOpenDoubleSix: true,
       openWithAnyDouble: true,
       strictPassing: false,
+      blockedByLowestPlayer: true,
       falsePassPenalty: 2,
       falsePassForfeits: true,
       countAllRemaining: false,
@@ -306,6 +307,7 @@
     toggle('drawline', 'Draw once both teams reach 5', 'drawAt', 5);
     toggle('falsepass', 'Punish a false pass', 'falsePassPenalty', 2);
     toggle('forfeit', 'A false pass loses the whole round', 'falsePassForfeits');
+    toggle('blocklow', 'A locked round goes to the single lightest hand', 'blockedByLowestPlayer');
     toggle('capicu', 'Capicú counts double', 'capicuPoints', 2);
     toggle('double6', 'First round opens with the 6-6', 'mustOpenDoubleSix');
     toggle('anydouble', 'The 6-6 holder may open with any double', 'openWithAnyDouble');
@@ -746,22 +748,31 @@
         card.appendChild(el('p', null, TEAMS[0] + ' +' + gotA + ' · ' + TEAMS[1] + ' +' + gotB));
       }
       var nameOf = function (seat) { return S.names[seat] || 'Seat ' + (seat + 1); };
+      var lightestName = function (res) {
+        var best = 0;
+        res.remaining.forEach(function (pips, seat) { if (pips < res.remaining[best]) best = seat; });
+        return nameOf(best);
+      };
       var why;
       if (r.calledOut) {
         why = nameOf(r.calledOut.by) + ' called out ' + nameOf(r.calledOut.accused) +
           (r.calledOut.correct ? ' — and was right.' : ' — and was wrong.');
       } else {
         why = r.kind === 'tie' ? 'The teams held equal pips, so nobody takes the round.'
-          : r.kind === 'blocked' ? TEAMS[r.winningTeam] + ' held fewer pips and takes the round.'
+          : r.kind === 'blocked' ? lightestName(r) + ' held the fewest pips' +
+              ((r.forfeited || []).indexOf(r.winningTeam) >= 0
+                ? '.' : ', so ' + TEAMS[r.winningTeam] + ' takes the round.')
           : TEAMS[r.winningTeam] + ' takes the round.';
       }
       card.appendChild(el('p', null, why));
 
       (r.forfeited || []).forEach(function (team) {
         var wentOut = r.dominoedBy !== null && D.teamOf(r.dominoedBy) === team;
+        var wouldHaveWon = r.winningTeam === team && r.kind === 'blocked';
         card.appendChild(el('p', 'forfeit', TEAMS[team] +
           ' passed on a tile they could have played, so they lose the round' +
-          (wentOut ? ' — even though they went out first.' : '.')));
+          (wentOut ? ' — even though they went out first.'
+            : wouldHaveWon ? ' — even though they held the lightest hand.' : '.')));
       });
 
       // Anyone who passed holding a tile that would have fitted.

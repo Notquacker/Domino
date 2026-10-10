@@ -595,6 +595,19 @@ function renderLanding(): HTMLElement {
     el('p', 'note', 'Go out on a tile that fits both open ends and the round is worth 2 instead of 1.'),
   );
 
+  const blockLow = el('label');
+  const blockLowBox = el('input') as HTMLInputElement;
+  blockLowBox.type = 'checkbox';
+  blockLowBox.id = 'blocklow';
+  blockLowBox.checked = true;
+  blockLowBox.style.width = 'auto';
+  blockLow.appendChild(blockLowBox);
+  blockLow.appendChild(el('span', 'grow', 'A locked round goes to the lightest hand'));
+  rulesBox.appendChild(blockLow);
+  rulesBox.appendChild(
+    el('p', 'note', 'When nobody can play and everyone still holds tiles, the round goes to the team with the single lightest hand — not the lower two-hand total.'),
+  );
+
   const anyDouble = el('label');
   const anyDoubleBox = el('input') as HTMLInputElement;
   anyDoubleBox.type = 'checkbox';
@@ -648,6 +661,7 @@ function renderLanding(): HTMLElement {
         falsePassPenalty: penaltyBox.checked ? 1 : 0,
         capicuPoints: capicuBox.checked ? (pips ? 25 : 2) : 0,
         openWithAnyDouble: anyDoubleBox.checked,
+        blockedByLowestPlayer: blockLowBox.checked,
         countAllRemaining: countAllBox.checked,
       },
     };
@@ -1449,6 +1463,14 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
       sheet.appendChild(el('div', 'big num', gained > 0 ? `+${gained}` : '0'));
 
       const nameOf = (seat: Seat): string => v.seats[seat]?.name ?? `Seat ${seat + 1}`;
+      // A locked round goes to the single lightest hand, so name whose it was.
+      const lightestSeat = (remaining: readonly number[]): Seat => {
+        let best: Seat = 0;
+        for (const seat of [1, 2, 3] as Seat[]) {
+          if ((remaining[seat] ?? 0) < (remaining[best] ?? 0)) best = seat;
+        }
+        return best;
+      };
       const call = result.calledOut;
       const who =
         call !== null
@@ -1458,7 +1480,12 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
           : result.kind === 'tie'
             ? 'Blocked and level — no point for the round.'
             : result.kind === 'blocked'
-              ? `Blocked. ${TEAM_NAMES[result.winningTeam ?? 0]} had fewer pips and takes the round.`
+              ? // When the lightest hand belongs to a team that forfeited, saying
+                // they "take the round" would contradict the forfeit line below.
+                `Blocked. ${nameOf(lightestSeat(result.remaining))} held the fewest pips` +
+                (result.winningTeam !== null && result.forfeited.includes(result.winningTeam)
+                  ? '.'
+                  : `, so ${TEAM_NAMES[result.winningTeam ?? 0]} takes the round.`)
               : `${nameOf(result.dominoedBy ?? 0)} went out${result.capicu ? ' with a capicú!' : '.'}`;
       sheet.appendChild(el('p', undefined, who));
 
@@ -1467,9 +1494,14 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
       for (const team of result.forfeited) {
         const line = el('p', 'forfeit');
         const wentOut = result.dominoedBy !== null && teamOf(result.dominoedBy) === team;
+        const wouldHaveWon = result.winningTeam === team && result.kind === 'blocked';
         line.textContent =
           `${TEAM_NAMES[team]} passed on a tile they could have played, so they lose the round` +
-          (wentOut ? ' — even though they went out first.' : '.');
+          (wentOut
+            ? ' — even though they went out first.'
+            : wouldHaveWon
+              ? ' — even though they held the lightest hand.'
+              : '.');
         sheet.appendChild(line);
       }
 

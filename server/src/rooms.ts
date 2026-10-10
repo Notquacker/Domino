@@ -129,6 +129,7 @@ function mergeRules(partial: Partial<HouseRules> | undefined): HouseRules {
     targetScore: target,
     winBy: clampInt(partial.winBy, 1, 5, base.winBy),
     drawAt,
+    blockedByLowestPlayer: bool(partial.blockedByLowestPlayer, base.blockedByLowestPlayer),
     mustOpenDoubleSix: bool(partial.mustOpenDoubleSix, base.mustOpenDoubleSix),
     openWithAnyDouble: bool(partial.openWithAnyDouble, base.openWithAnyDouble),
     strictPassing: bool(partial.strictPassing, base.strictPassing),

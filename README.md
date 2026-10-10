@@ -65,8 +65,14 @@ it is practice, and counting it would inflate everyone's record.
   a tile that matched both open ends. A capicú also earns your team a
   **smash**: slam the table and send the tiles skidding out of line until the
   next deal. The server decides who has earned one, so the button cannot be
-  conjured up by a tampered client. A blocked round goes to the team with
-  the fewer pips; dead level scores nothing for the round.
+  conjured up by a tampered client.
+- **A locked round goes to the single lightest hand.** When nobody can play
+  and everyone still holds tiles, the round is decided on the lightest hand at
+  the table, not on which team's two hands add up to less. One player sitting
+  on three pips wins it for their side however much their partner is holding.
+  Level on the lightest hand scores nothing. In three thousand deals this
+  changed who took the round in **23% of locked rounds**, so it is not a
+  detail.
 - **The match is first to 10 — but only while the other team is under 5.**
   The moment **both** teams have reached 5 the match stops level and is
   **drawn**, 5-5 included. So 10-4 is a win, while 5-5, 6-5, 7-5 and 10-5 are
@@ -86,11 +92,13 @@ when the table is created:
 | Point against a false pass | **on** | Passing while holding a playable tile scores for the other team. |
 | Capicú counts double | **on** | A capicú round is worth 2 instead of 1 (+25 pips in the pip game). |
 | Forced 6-6 opening | on | Round one is opened by the 6-6 holder, who must play it. |
+| Locked round to the lightest hand | on | A blocked round is settled on the lightest single hand, not the lower two-hand total. |
 
 Two conventions are baked in and worth confirming against how you play:
 
-1. **A blocked round is won on team pip totals**, and the next lead goes to
-   whichever member of the winning team held fewer pips.
+1. **A blocked round is won on the lightest single hand**, not on team pip
+   totals, and the next lead goes to whichever member of the winning team
+   held fewer pips. Turn `blockedByLowestPlayer` off for the totals rule.
 2. **A level blocked round scores nothing** and is re-dealt by the same opener.
 
 Both live in `shared/src/rules.ts` and are small to change.

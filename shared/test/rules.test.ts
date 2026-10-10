@@ -28,6 +28,7 @@ import {
   tilePips,
   callOut,
   seatsThatPassed,
+  describeResult,
 } from '../dist/index.js';
 
 const rules = (over: Partial<HouseRules> = {}): HouseRules => ({ ...PIP_RULES, ...over });
@@ -324,11 +325,8 @@ describe('scoring a round', () => {
     assert.equal(out.result!.points, 21, '12 + 8 + the partner’s 1');
   });
 
-  it('decides a blocked round on team pips', () => {
-    const board = placeTile([], '0-0', 'right');
-    // Nobody holds a blank, so every seat must pass.
-    const m = match(round({ hands: [['1-2'], ['3-4'], ['5-6'], ['1-3']], board, turn: 0 }));
-
+  /** Pass round the table until the round ends. */
+  function passAllRound(m: MatchState) {
     let state = m;
     let result = null;
     for (const seat of [0, 1, 2, 3] as Seat[]) {
@@ -336,13 +334,34 @@ describe('scoring a round', () => {
       state = out.match;
       result = out.result ?? result;
     }
+    return { state, result };
+  }
+
+  it('decides a blocked round on the single lightest hand', () => {
+    const board = placeTile([], '0-0', 'right');
+    // Nobody holds a blank, so every seat must pass.
+    // Seat 0 holds 1-2 — three pips, the lightest hand at the table — so
+    // Team A takes it even though their two hands add up to far more.
+    //   Team A: 1-2 (3) and 5-6 (11), lightest 3, total 14
+    //   Team B: 3-4 (7) and 1-3 (4),  lightest 4, total 11
+    const m = match(round({ hands: [['1-2'], ['3-4'], ['5-6'], ['1-3']], board, turn: 0 }));
+    const { state, result } = passAllRound(m);
 
     assert.ok(result, 'four passes should end the round');
     assert.equal(result!.kind, 'blocked');
-    // Team A: 1-2 + 5-6 = 14. Team B: 3-4 + 1-3 = 11. Team B is lower.
-    assert.equal(result!.winningTeam, 1);
-    assert.equal(result!.points, 14);
-    assert.deepEqual(state.scores, [0, 14]);
+    assert.equal(result!.winningTeam, 0, 'the team holding the lightest hand');
+    // Under pip scoring the winner collects the OPPONENTS' pips: 7 + 4.
+    assert.deepEqual(state.scores, [11, 0]);
+  });
+
+  it('can still be settled on the two-hand total instead', () => {
+    const board = placeTile([], '0-0', 'right');
+    // The same deal under the old rule hands it to the other team entirely.
+    const m = match(round({ hands: [['1-2'], ['3-4'], ['5-6'], ['1-3']], board, turn: 0 }), {
+      rules: rules({ blockedByLowestPlayer: false }),
+    });
+    const { result } = passAllRound(m);
+    assert.equal(result!.winningTeam, 1, 'lower total, heavier lightest hand');
   });
 
   it('ends a blocked round as soon as no one can move', () => {
@@ -354,17 +373,14 @@ describe('scoring a round', () => {
     assert.equal(out.result!.kind, 'blocked');
   });
 
-  it('scores nothing when a blocked round is level', () => {
+  it('scores nothing when the lightest hands are level', () => {
     const board = placeTile([], '0-0', 'right');
-    // Team A: 1-2 (3) + 3-4 (7) = 10. Team B: 1-3 (4) + 2-4 (6) = 10.
-    const m = match(round({ hands: [['1-2'], ['1-3'], ['3-4'], ['2-4']], board, turn: 0 }));
-    let state = m;
-    let result = null;
-    for (const seat of [0, 1, 2, 3] as Seat[]) {
-      const out = applyMove(state, seat, { kind: 'pass' });
-      state = out.match;
-      result = out.result ?? result;
-    }
+    // Lightest hand on each side is five pips, so there is nothing between
+    // them — never mind that Team A is carrying far more in total.
+    //   Team A: 2-3 (5) and 5-6 (11)
+    //   Team B: 1-4 (5) and 3-4 (7)
+    const m = match(round({ hands: [['2-3'], ['1-4'], ['5-6'], ['3-4']], board, turn: 0 }));
+    const { state, result } = passAllRound(m);
     assert.equal(result!.kind, 'tie');
     assert.equal(result!.winningTeam, null);
     assert.equal(result!.points, 0);
@@ -431,7 +447,8 @@ describe('match flow', () => {
 
   it('gives a blocked round’s lead to the lighter hand on the winning team', () => {
     const board = placeTile([], '0-0', 'right');
-    // Team B wins; seat 3 holds 1-3 (4) against seat 1's 3-4 (7).
+    // Team A wins on seat 0's three pips, and seat 0 is also their lighter
+    // hand, so the lead is theirs.
     const m = match(round({ hands: [['1-2'], ['3-4'], ['5-6'], ['1-3']], board, turn: 0 }));
     let state = m;
     let result = null;
@@ -440,8 +457,8 @@ describe('match flow', () => {
       state = out.match;
       result = out.result ?? result;
     }
-    assert.equal(result!.winningTeam, 1);
-    assert.equal(result!.nextStarter, 3);
+    assert.equal(result!.winningTeam, 0);
+    assert.equal(result!.nextStarter, 0);
   });
 
   it('refuses to deal the next round while one is in progress', () => {
@@ -1084,5 +1101,33 @@ describe('remembering the opening tile', () => {
   it('is cleared by a fresh deal', () => {
     const m = newMatch(roundRules(), seededRng(9));
     assert.equal(m.round!.openerTile, null);
+  });
+});
+
+describe('describing a round nobody can be proud of', () => {
+  it('never says a team takes a round it forfeited', () => {
+    const board = placeTile([], '0-0', 'right');
+    // Seat 0 holds the lightest hand AND bluffed, so Team A would otherwise
+    // be described as taking the round and losing it in the same breath.
+    const m = match(round({ hands: [['1-2'], ['3-4'], ['5-6'], ['1-3']], board, turn: 0 }), {
+      rules: roundRules(),
+    });
+    let state = m;
+    let result = null;
+    for (const seat of [0, 1, 2, 3] as Seat[]) {
+      const out = applyMove(state, seat, { kind: 'pass' });
+      state = out.match;
+      result = out.result ?? result;
+    }
+    assert.equal(result!.kind, 'blocked');
+    assert.equal(result!.winningTeam, 0, 'seat 0 held the lightest hand');
+
+    const forced = { ...result!, forfeited: [0 as const] };
+    const text = describeResult(forced);
+    assert.ok(text.includes('held the fewest pips'), 'still says whose hand was lightest');
+    assert.ok(
+      !/Team A takes the round/.test(text),
+      `a forfeiting team must not be said to take the round: ${text}`,
+    );
   });
 });

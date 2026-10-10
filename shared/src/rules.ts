@@ -85,6 +85,17 @@ export interface HouseRules {
    * below the line. Null disables the rule.
    */
   readonly drawAt: number | null;
+  /**
+   * How a blocked round is settled — nobody can play and everyone still holds
+   * tiles.
+   *
+   * True (the default) compares the single lightest hand on each side: the
+   * team holding the player with the fewest pips takes the round, however
+   * heavy their partner is. False adds each team's two hands together
+   * instead, which can hand the round to a side whose lightest player is in
+   * fact the heavier of the two.
+   */
+  readonly blockedByLowestPlayer: boolean;
   /** First round of a match is opened by whoever holds the 6-6, who must play it. */
   readonly mustOpenDoubleSix: boolean;
   /**
@@ -139,6 +150,7 @@ export const DEFAULT_RULES: HouseRules = {
   targetScore: 10,
   winBy: 1,
   drawAt: 5,
+  blockedByLowestPlayer: true,
   mustOpenDoubleSix: true,
   openWithAnyDouble: true,
   strictPassing: false,
@@ -442,6 +454,16 @@ function teamPips(remaining: readonly number[], team: Team): number {
   return (remaining[a] ?? 0) + (remaining[b] ?? 0);
 }
 
+/**
+ * What a team is judged on when the round locks up: the lighter of its two
+ * hands, not the two added together. A side carrying one very light hand and
+ * one heavy one beats a side whose hands are merely even.
+ */
+function teamLowestPips(remaining: readonly number[], team: Team): number {
+  const [a, b] = seatsOfTeam(team);
+  return Math.min(remaining[a] ?? 0, remaining[b] ?? 0);
+}
+
 function scoreFor(
   rules: HouseRules,
   remaining: readonly number[],
@@ -718,8 +740,9 @@ function finishRound(
     kind = 'domino';
     winningTeam = teamOf(dominoedBy);
   } else {
-    const t0 = teamPips(remaining, 0);
-    const t1 = teamPips(remaining, 1);
+    const measure = rules.blockedByLowestPlayer ? teamLowestPips : teamPips;
+    const t0 = measure(remaining, 0);
+    const t1 = measure(remaining, 1);
     if (t0 === t1) {
       kind = 'tie';
       winningTeam = null;
@@ -847,7 +870,18 @@ export function describeResult(r: RoundResult): string {
       const capicu = r.capicu ? ' with a capicu' : '';
       parts.push(`Seat ${r.dominoedBy} went out${capicu} — ${team} takes the round (+${won}).`);
     } else {
-      parts.push(`Round blocked — ${team} had fewer pips and takes the round (+${won}).`);
+      const lightest = r.remaining.reduce(
+        (best, pips, seat) => (pips < (r.remaining[best] ?? 0) ? seat : best),
+        0,
+      );
+      // If that team also forfeited, "takes the round" would contradict the
+      // forfeit line that follows.
+      const kept = r.winningTeam !== null && !r.forfeited.includes(r.winningTeam);
+      parts.push(
+        kept
+          ? `Round blocked — seat ${lightest} held the fewest pips, so ${team} takes the round (+${won}).`
+          : `Round blocked — seat ${lightest} held the fewest pips.`,
+      );
     }
   }
 
