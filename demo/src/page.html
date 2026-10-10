@@ -126,11 +126,22 @@ details.rules[open] summary::before { content: "▾ "; }
 .backs { display: flex; gap: 2px; margin-top: 5px; }
 .back { width: 7px; height: 13px; border-radius: 2px; background: #ffffff3d; }
 
-.table { flex: 1; display: flex; align-items: center; overflow-x: auto; overflow-y: hidden; min-height: 132px; }
-.table::-webkit-scrollbar { height: 6px; }
+.table {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  /* The chain folds to fit, so nothing runs off the side. */
+  overflow-x: hidden; overflow-y: auto; min-height: 132px;
+}
+.table::-webkit-scrollbar { width: 6px; }
 .table::-webkit-scrollbar-thumb { background: #ffffff26; border-radius: 3px; }
-.chain { display: flex; align-items: center; gap: 3px; margin: auto; padding: 0 16px; }
-.chain .blank { color: var(--muted); font-size: 14px; white-space: nowrap; }
+
+/* The chain snakes: each row runs the opposite way to the one above it. */
+.chain {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  margin: auto; padding: 0 16px; max-width: 100%;
+}
+.chainrow { display: flex; align-items: center; gap: 3px; }
+.chainrow.reverse { flex-direction: row-reverse; }
+.chain .blank { color: var(--muted); font-size: 14px; text-align: center; }
 .endslot {
   flex: none; width: 34px; height: 56px; padding: 0;
   border: 2px dashed #ffffff38; border-radius: 8px; background: transparent;
@@ -157,6 +168,14 @@ details.rules[open] summary::before { content: "▾ "; }
 }
 .tile.h { width: 76px; height: 39px; grid-template-columns: 1fr 1fr; }
 .tile.v { width: 39px; height: 76px; grid-template-rows: 1fr 1fr; }
+.chain .tile.h { width: calc(76px * var(--tile-scale, 1)); height: calc(39px * var(--tile-scale, 1)); }
+.chain .tile.v { width: calc(39px * var(--tile-scale, 1)); height: calc(76px * var(--tile-scale, 1)); }
+.chain .pip { max-width: calc(7px * var(--tile-scale, 1)); }
+.chain .endslot {
+  width: calc(34px * var(--tile-scale, 1));
+  height: calc(56px * var(--tile-scale, 1));
+  font-size: calc(17px * var(--tile-scale, 1));
+}
 .tile.h .half + .half { border-left: 1px solid #00000030; }
 .tile.v .half + .half { border-top: 1px solid #00000030; }
 .half { display: grid; grid-template: repeat(3,1fr)/repeat(3,1fr); gap: 1px; padding: 2px; place-items: center; }
@@ -226,6 +245,9 @@ details.rules[open] summary::before { content: "▾ "; }
 @media (min-width: 620px) {
   .tile.h { width: 88px; height: 45px; } .tile.v { width: 45px; height: 88px; }
   .pip { max-width: 9px; } .endslot { width: 40px; height: 64px; }
+  .chain .tile.h { width: calc(88px * var(--tile-scale, 1)); height: calc(45px * var(--tile-scale, 1)); }
+  .chain .tile.v { width: calc(45px * var(--tile-scale, 1)); height: calc(88px * var(--tile-scale, 1)); }
+  .chain .pip { max-width: calc(9px * var(--tile-scale, 1)); }
 }
 </style>
 <div id="app"></div>

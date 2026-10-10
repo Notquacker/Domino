@@ -28,11 +28,6 @@
 
   var root = document.getElementById('app');
   var lastBoard = [];
-  var tableScroll = 0;
-  /* Which end the chain last grew at, so the end you can actually play on
-     stays on screen across re-renders — not just the one that caused it. */
-  var anchor = null;
-  var userScrolled = false;
 
   /* ---------- tiny DOM helpers ---------- */
   function el(tag, cls, text) {
@@ -53,8 +48,15 @@
     n.setAttribute('aria-label', a + ' ' + b);
     return n;
   }
-  function boardTile(p, fresh) {
-    return tileNode(p.left, p.right, p.left === p.right, 'board' + (fresh ? ' fresh' : ''));
+  /**
+   * `flipped` swaps the halves for rows that run right to left, so the pips
+   * read continuously along the snake. Swapping beats mirroring with a
+   * transform, which would fight the drop animation.
+   */
+  function boardTile(p, fresh, flipped) {
+    var near = flipped ? p.right : p.left;
+    var far = flipped ? p.left : p.right;
+    return tileNode(near, far, p.left === p.right, 'board' + (fresh ? ' fresh' : ''));
   }
   function handTile(id, state) {
     var t = D.parseTile(id), n = tileNode(t.low, t.high, true, 'inhand ' + state);
@@ -281,53 +283,67 @@
     return b;
   }
 
+  var TILE_SHORT = 39, TILE_LONG = 76, TILE_GAP = 3;
+
+  /** Shrink tiles as the chain grows so the whole board keeps fitting. */
+  function chainScale(count) {
+    if (count <= 8) return 1;
+    if (count <= 14) return 0.84;
+    if (count <= 20) return 0.7;
+    return 0.58;
+  }
+
+  /** Fold the chain into rows that fit, each running back the other way. */
+  function foldChain(board, scale, available) {
+    var shortW = TILE_SHORT * scale + TILE_GAP;
+    var longW = TILE_LONG * scale + TILE_GAP;
+    var rows = [[]], used = 0;
+    board.forEach(function (p) {
+      var w = p.left === p.right ? shortW : longW;
+      if (used + w > available && rows[rows.length - 1].length > 0) { rows.push([]); used = 0; }
+      rows[rows.length - 1].push(p);
+      used += w;
+    });
+    return rows;
+  }
+
   function renderTable() {
     var box = el('div', 'table');
     var chain = el('div', 'chain');
     var board = round().board;
-    var playing = S.match.phase === 'playing';
+    var isPlaying = playing();
 
     if (!board.length) {
-      chain.appendChild(el('div', 'blank', playing ? 'Your lead — tap a tile to lay it down.' : 'No tiles down yet.'));
-    } else {
-      if (playing) chain.appendChild(endSlot('left'));
-      var ids0 = board.map(function (b) { return b.id; });
-      // Whichever end grew holds the tile that just landed.
-      var freshId = ids0.length > lastBoard.length
-        ? (ids0[0] === lastBoard[0] ? ids0[ids0.length - 1] : ids0[0])
-        : null;
-      board.forEach(function (p) { chain.appendChild(boardTile(p, p.id === freshId)); });
-      if (playing) chain.appendChild(endSlot('right'));
+      chain.appendChild(el('div', 'blank', isPlaying ? 'Your lead — tap a tile to lay it down.' : 'No tiles down yet.'));
+      box.appendChild(chain);
+      lastBoard = [];
+      return box;
     }
-    box.appendChild(chain);
+
+    var scale = chainScale(board.length);
+    chain.style.setProperty('--tile-scale', String(scale));
+
+    var slots = isPlaying ? 2 * (34 * scale + TILE_GAP) : 0;
+    var available = Math.max(140, Math.min(window.innerWidth, 920) - 32 - slots);
 
     var ids = board.map(function (b) { return b.id; });
-    if (ids.length > lastBoard.length) {
-      anchor = ids[0] === lastBoard[0] ? 'right' : 'left';
-      userScrolled = false;
-    }
-    if (!ids.length) { anchor = null; userScrolled = false; }
+    var grewRight = ids.length > lastBoard.length && ids[0] === lastBoard[0];
+    var grewLeft = ids.length > lastBoard.length && !grewRight;
+    var freshId = grewRight ? ids[ids.length - 1] : (grewLeft ? ids[0] : null);
 
-    // Two frames: the first lets the chain lay out (web fonts can still be
-    // settling), the second measures a width that is actually final.
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () {
-        var max = Math.max(0, box.scrollWidth - box.clientWidth);
-        var target = userScrolled ? Math.min(tableScroll, max)
-          : anchor === 'right' ? max
-          : anchor === 'left' ? 0
-          : Math.min(tableScroll, max);
-        programmatic = true;
-        box.scrollLeft = target;
-        tableScroll = target;
-        requestAnimationFrame(function () { programmatic = false; });
+    var rows = foldChain(board, scale, available);
+    rows.forEach(function (tiles, index) {
+      var reversed = index % 2 === 1;
+      var row = el('div', 'chainrow' + (reversed ? ' reverse' : ''));
+      if (index === 0 && isPlaying) row.appendChild(endSlot('left'));
+      tiles.forEach(function (p) {
+        row.appendChild(boardTile(p, p.id === freshId, reversed));
       });
+      if (index === rows.length - 1 && isPlaying) row.appendChild(endSlot('right'));
+      chain.appendChild(row);
     });
-    var programmatic = false;
-    box.addEventListener('scroll', function () {
-      tableScroll = box.scrollLeft;
-      if (!programmatic) userScrolled = true;   // respect a deliberate look elsewhere
-    });
+
+    box.appendChild(chain);
     lastBoard = ids;
     return box;
   }
@@ -495,6 +511,12 @@
     }
     render();
   }
+  var resizeTimer = null;
+  window.addEventListener('resize', function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { resizeTimer = null; render(); }, 150);
+  });
+
   if (window.claude && window.claude.hot) {
     window.claude.hot.snapshot(function () { return { S: S }; });
   }

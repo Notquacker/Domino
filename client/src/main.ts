@@ -74,7 +74,6 @@ let chats: { from: string; text: string }[] = [];
 let name = recall(STORE.name);
 let formCode = new URL(location.href).searchParams.get('code')?.toUpperCase() ?? '';
 let lastBoard: readonly string[] = [];
-let tableScroll = 0;
 let account: Account | null = null;
 let stats: Stats | null = null;
 /** 'unavailable' means Supabase is configured but we could not reach it. */
@@ -742,48 +741,94 @@ function endSlot(v: PlayerView, end: End): HTMLElement {
   return slot;
 }
 
+/** Base tile dimensions in CSS pixels, matching the stylesheet. */
+const TILE_SHORT = 40;
+const TILE_LONG = 78;
+const TILE_GAP = 3;
+
+/**
+ * Shrink the tiles as the chain grows so the whole board keeps fitting on
+ * screen. Twenty-eight full-size tiles would be several screens wide.
+ */
+function chainScale(count: number): number {
+  if (count <= 8) return 1;
+  if (count <= 14) return 0.84;
+  if (count <= 20) return 0.7;
+  return 0.58;
+}
+
+/**
+ * Fold the chain into rows that fit the screen, each running the opposite way
+ * to the one above — the way a real chain snakes back across a table.
+ */
+function foldChain(
+  board: readonly PlayerView['board'][number][],
+  scale: number,
+  available: number,
+): (typeof board)[] {
+  const short = TILE_SHORT * scale + TILE_GAP;
+  const long = TILE_LONG * scale + TILE_GAP;
+  const rows: (typeof board)[number][][] = [[]];
+  let used = 0;
+  for (const placed of board) {
+    const width = placed.left === placed.right ? short : long;
+    const row = rows[rows.length - 1] as (typeof board)[number][];
+    if (used + width > available && row.length > 0) {
+      rows.push([]);
+      used = 0;
+    }
+    (rows[rows.length - 1] as (typeof board)[number][]).push(placed);
+    used += width;
+  }
+  return rows as (typeof board)[];
+}
+
 function renderTable(v: PlayerView): HTMLElement {
-  const table = el('div', 'table');
+  const box = el('div', 'table');
   const chain = el('div', 'chain');
+  const playing = v.youMayMove;
 
   if (v.board.length === 0) {
     chain.appendChild(
       el(
         'div',
         'empty-table',
-        myTurn() ? 'Your lead — tap a tile to lay it down.' : 'Waiting for the opening tile…',
+        playing ? 'Your lead — tap a tile to lay it down.' : 'Waiting for the opening tile…',
       ),
     );
-  } else {
-    if (myTurn()) chain.appendChild(endSlot(v, 'left'));
-    const ids = v.board.map((b) => b.id);
-    // Whichever end grew is the tile that just landed.
-    const freshId =
-      ids.length > lastBoard.length
-        ? ids[0] === lastBoard[0]
-          ? ids[ids.length - 1]
-          : ids[0]
-        : null;
-    for (const placed of v.board) chain.appendChild(boardTile(placed, placed.id === freshId));
-    if (myTurn()) chain.appendChild(endSlot(v, 'right'));
+    box.appendChild(chain);
+    lastBoard = [];
+    return box;
   }
 
-  table.appendChild(chain);
+  const scale = chainScale(v.board.length);
+  chain.style.setProperty('--tile-scale', String(scale));
 
-  // Keep the end that just changed in view, and otherwise hold position.
+  // Leave room for the two end slots, which sit at either tip of the snake.
+  const gutter = 32;
+  const slots = playing ? 2 * (34 * scale + TILE_GAP) : 0;
+  const available = Math.max(140, Math.min(window.innerWidth, 920) - gutter - slots);
+
   const ids = v.board.map((b) => b.id);
   const grewRight = ids.length > lastBoard.length && ids[0] === lastBoard[0];
   const grewLeft = ids.length > lastBoard.length && !grewRight;
-  requestAnimationFrame(() => {
-    if (grewRight) table.scrollLeft = table.scrollWidth;
-    else if (grewLeft) table.scrollLeft = 0;
-    else table.scrollLeft = tableScroll;
+  const freshId = grewRight ? ids[ids.length - 1] : grewLeft ? ids[0] : null;
+
+  const rows = foldChain(v.board, scale, available);
+  rows.forEach((tiles, index) => {
+    const reversed = index % 2 === 1;
+    const row = el('div', `chainrow${reversed ? ' reverse' : ''}`);
+    if (index === 0 && playing) row.appendChild(endSlot(v, 'left'));
+    for (const placed of tiles) {
+      row.appendChild(boardTile(placed, placed.id === freshId, reversed));
+    }
+    if (index === rows.length - 1 && playing) row.appendChild(endSlot(v, 'right'));
+    chain.appendChild(row);
   });
-  table.addEventListener('scroll', () => {
-    tableScroll = table.scrollLeft;
-  });
+
+  box.appendChild(chain);
   lastBoard = ids;
-  return table;
+  return box;
 }
 
 function renderStatus(v: PlayerView): HTMLElement {
@@ -1047,6 +1092,15 @@ function tickClock(): void {
   node.textContent = `${left}s`;
   node.className = left <= 10 ? 'clock low' : 'clock';
 }
+
+let resizeTimer: number | null = null;
+window.addEventListener('resize', () => {
+  if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = null;
+    render();
+  }, 150);
+});
 
 window.setInterval(tickClock, 500);
 window.addEventListener('online', () => render());

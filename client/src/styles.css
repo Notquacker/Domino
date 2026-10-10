@@ -204,17 +204,26 @@ input::placeholder { color: var(--muted); }
 
 .table {
   flex: 1;
-  display: flex; align-items: center;
+  display: flex; align-items: center; justify-content: center;
   padding: 10px 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-behavior: smooth;
+  /* The chain folds to fit, so nothing runs off the side. */
+  overflow-x: hidden;
+  overflow-y: auto;
   min-height: 150px;
 }
-.table::-webkit-scrollbar { height: 6px; }
+.table::-webkit-scrollbar { width: 6px; }
 .table::-webkit-scrollbar-thumb { background: #ffffff24; border-radius: 3px; }
-.chain { display: flex; align-items: center; gap: 3px; margin: auto; padding: 0 14px; }
-.chain .empty-table { color: var(--muted); font-size: 14px; white-space: nowrap; }
+
+/* The chain snakes: each row runs the opposite way to the one above it. */
+.chain {
+  display: flex; flex-direction: column;
+  align-items: center; gap: 4px;
+  margin: auto; padding: 0 14px;
+  max-width: 100%;
+}
+.chainrow { display: flex; align-items: center; gap: 3px; }
+.chainrow.reverse { flex-direction: row-reverse; }
+.chain .empty-table { color: var(--muted); font-size: 14px; text-align: center; }
 
 .endslot {
   flex: none;
@@ -270,6 +279,20 @@ input::placeholder { color: var(--muted); }
 /* A non-double lies along the chain; a double sits across it. */
 .tile.h { width: var(--tile-h); height: var(--tile-w); grid-template-columns: 1fr 1fr; }
 .tile.v { width: var(--tile-w); height: var(--tile-h); grid-template-rows: 1fr 1fr; }
+.chain .tile.h {
+  width: calc(var(--tile-h) * var(--tile-scale, 1));
+  height: calc(var(--tile-w) * var(--tile-scale, 1));
+}
+.chain .tile.v {
+  width: calc(var(--tile-w) * var(--tile-scale, 1));
+  height: calc(var(--tile-h) * var(--tile-scale, 1));
+}
+.chain .pip { max-width: calc(7px * var(--tile-scale, 1)); }
+.chain .endslot {
+  width: calc(34px * var(--tile-scale, 1));
+  height: calc(56px * var(--tile-scale, 1));
+  font-size: calc(18px * var(--tile-scale, 1));
+}
 .tile.h .half + .half { border-left: 1px solid #0000002e; }
 .tile.v .half + .half { border-top: 1px solid #0000002e; }
 

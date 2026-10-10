@@ -45,10 +45,17 @@ function tile(a: number, b: number, vertical: boolean, extra: string): HTMLEleme
 /**
  * A tile as it sits on the table — doubles turned across the chain. `fresh`
  * marks the tile that was just played so it can land rather than appear.
+ *
+ * `flipped` swaps the two halves, for the rows of the chain that run right to
+ * left: the pips then still read continuously along the snake. Swapping the
+ * halves rather than mirroring with a transform keeps the drop animation free
+ * to use `transform` itself.
  */
-export function boardTile(placed: BoardTile, fresh = false): HTMLElement {
+export function boardTile(placed: BoardTile, fresh = false, flipped = false): HTMLElement {
   const isDouble = placed.left === placed.right;
-  const node = tile(placed.left, placed.right, isDouble, `board${fresh ? ' fresh' : ''}`);
+  const near = flipped ? placed.right : placed.left;
+  const far = flipped ? placed.left : placed.right;
+  const node = tile(near, far, isDouble, `board${fresh ? ' fresh' : ''}`);
   node.dataset['tile'] = placed.id;
   node.setAttribute('aria-label', `${placed.left} ${placed.right}`);
   return node;
