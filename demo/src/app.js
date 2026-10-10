@@ -426,6 +426,39 @@
      * back from the opener it meets by its RIGHT half. Get this wrong and
      * the board draws with mismatched pips touching.
      */
+    // Unit step for each direction: right, down, left, up.
+    var STEP = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+
+    function acrossOf(tile) { return tile.left === tile.right ? longS : shortS; }
+
+    /**
+     * Move the cursor round a corner.
+     *
+     * Left alone, the turning tile would be centred on the previous tile's far
+     * edge and so lap back over it. Stepping back along the old direction by
+     * half the new tile's width, and on along the new direction by half the
+     * old tile's width, sets the two tiles corner to corner: they still
+     * touch, but nothing is laid on top of anything.
+     */
+    // Which way the chain turns next. Snake mode serpentines: every
+    // horizontal run steps one tile across and then doubles back the other
+    // way, so the chain never climbs into a row it has already filled.
+    // Cycling the four directions instead would walk it straight back over
+    // its own tiles. Square mode does keep turning the same way, which is
+    // what traces the ring.
+    function nextDir(d, lastH, vert) {
+      if (mode === 'square') return (d + 1) % 4;
+      return d === vert ? (lastH === 0 ? 2 : 0) : vert;
+    }
+
+    function turnCursor(at, from, to, oldAcross, newAcross) {
+      var o = STEP[from], n = STEP[to];
+      return {
+        x: at.x - o[0] * (newAcross / 2) + n[0] * (oldAcross / 2),
+        y: at.y - o[1] * (newAcross / 2) + n[1] * (oldAcross / 2)
+      };
+    }
+
     function put(tile, index, dir, cx, cy, backward) {
       var isDouble = tile.left === tile.right;
       var along = isDouble ? shortS : longS, across = isDouble ? longS : shortS;
@@ -443,26 +476,38 @@
       };
     }
 
-    // A double lies across the chain rather than along it, so the chain
-    // cannot turn immediately after one — the corner would fold back through
-    // a tile that is already crosswise. The run carries straight on instead.
+    // A double lies across the chain rather than along it, so the chain can
+    // neither turn immediately after one nor turn on one: either way the
+    // corner folds a crosswise tile over its neighbour, blanketing the whole
+    // of it instead of meeting its end. The run carries straight on and
+    // turns at the next ordinary tile instead.
     function isDouble(t) { return !!t && t.left === t.right; }
 
     var cursor = put(board[openerIndex], openerIndex, 0, 0, 0);
-    var dir = 0, run = 1, limit = halfRun + 1;
+    var lastAcross = acrossOf(board[openerIndex]);
+    var dir = 0, run = 1, limit = halfRun + 1, lastH = 0;
     for (var i = openerIndex + 1; i < board.length; i++) {
-      if (run >= limit && !isDouble(board[i - 1])) {
-        dir = (dir + 1) % 4; run = 0; limit = runLimit(dir);
+      if (run >= limit && !isDouble(board[i - 1]) && !isDouble(board[i])) {
+        var next = nextDir(dir, lastH, 1);
+        if (next === 0 || next === 2) lastH = next;
+        cursor = turnCursor(cursor, dir, next, lastAcross, acrossOf(board[i]));
+        dir = next; run = 0; limit = runLimit(dir);
       }
       cursor = put(board[i], i, dir, cursor.x, cursor.y);
+      lastAcross = acrossOf(board[i]);
       run++;
     }
     var back = 2, backRun = 1, backLimit = MAX_RUN - halfRun, bc = { x: 0, y: 0 };
+    var backAcross = acrossOf(board[openerIndex]), lastBackH = 2;
     for (var j = openerIndex - 1; j >= 0; j--) {
-      if (backRun >= backLimit && !isDouble(board[j + 1])) {
-        back = (back + 1) % 4; backRun = 0; backLimit = runLimit(back);
+      if (backRun >= backLimit && !isDouble(board[j + 1]) && !isDouble(board[j])) {
+        var nextBack = nextDir(back, lastBackH, 3);
+        if (nextBack === 0 || nextBack === 2) lastBackH = nextBack;
+        bc = turnCursor(bc, back, nextBack, backAcross, acrossOf(board[j]));
+        back = nextBack; backRun = 0; backLimit = runLimit(back);
       }
       bc = put(board[j], j, back, bc.x, bc.y, true);
+      backAcross = acrossOf(board[j]);
       backRun++;
     }
 

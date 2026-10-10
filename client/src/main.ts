@@ -936,9 +936,57 @@ function layoutChain(
   // and a board so wide it has to be shrunk to stay on screen.
   const halfRun = Math.max(1, Math.floor((MAX_RUN - 1) / 2));
 
-  const size = (tile: Placed, dir: Dir): { along: number; across: number } => {
+  const size = (tile: Placed): { along: number; across: number } => {
     const isDouble = tile.left === tile.right;
     return isDouble ? { along: short, across: long } : { along: long, across: short };
+  };
+
+  /** Unit step for each direction: right, down, left, up. */
+  const STEP: readonly (readonly [number, number])[] = [
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+    [0, -1],
+  ];
+
+  /**
+   * Move the cursor round a corner.
+   *
+   * Left alone, the turning tile would be centred on the previous tile's far
+   * edge and so lap back over it. Stepping back along the old direction by
+   * half the new tile's width, and on along the new direction by half the old
+   * tile's width, sets the two tiles corner to corner: they still touch, but
+   * nothing is laid on top of anything.
+   */
+  /**
+   * Which way the chain turns next.
+   *
+   * Snake mode serpentines: every horizontal run steps one tile across and
+   * then doubles back the other way, so the chain never climbs into a row it
+   * has already filled. Cycling the four directions instead would walk it
+   * straight back over its own tiles. Square mode does keep turning the same
+   * way, which is what traces the ring.
+   */
+  const nextDir = (d: Dir, lastH: Dir, vert: Dir): Dir =>
+    mode === 'square'
+      ? (((d + 1) % 4) as Dir)
+      : d === vert
+        ? ((lastH === 0 ? 2 : 0) as Dir)
+        : vert;
+
+  const turnCursor = (
+    at: { x: number; y: number },
+    from: Dir,
+    to: Dir,
+    oldAcross: number,
+    newAcross: number,
+  ): { x: number; y: number } => {
+    const o = STEP[from] as readonly [number, number];
+    const n = STEP[to] as readonly [number, number];
+    return {
+      x: at.x - o[0] * (newAcross / 2) + n[0] * (oldAcross / 2),
+      y: at.y - o[1] * (newAcross / 2) + n[1] * (oldAcross / 2),
+    };
   };
 
   /**
@@ -958,7 +1006,7 @@ function layoutChain(
     cy: number,
     backward = false,
   ): { x: number; y: number } => {
-    const { along, across } = size(tile, dir);
+    const { along, across } = size(tile);
     const vertical = dir === 1 || dir === 3;
     const w = vertical ? across : along;
     const h = vertical ? along : across;
@@ -986,12 +1034,14 @@ function layoutChain(
 
   // The opener sits at the origin, lying along the chain.
   let cursor = put(board[openerIndex] as Placed, openerIndex, 0, 0, 0);
+  let lastAcross = size(board[openerIndex] as Placed).across;
 
   /**
-   * A double lies across the chain rather than along it, so the chain cannot
-   * turn immediately after one — the corner would fold back through a tile
-   * that is already crosswise. When a turn falls there the run carries
-   * straight on and turns at the next tile instead.
+   * A double lies across the chain rather than along it, so the chain can
+   * neither turn immediately after one nor turn on one: either way the corner
+   * folds a crosswise tile over its neighbour, blanketing the whole of it
+   * instead of meeting its end. When a turn falls on a double the run carries
+   * straight on and turns at the next ordinary tile instead.
    */
   const isDouble = (tile: Placed | undefined): boolean =>
     tile !== undefined && tile.left === tile.right;
@@ -1000,13 +1050,19 @@ function layoutChain(
   let dir: Dir = 0;
   let run = 1;
   let limit = halfRun + 1;
+  let lastH: Dir = 0;
   for (let i = openerIndex + 1; i < board.length; i++) {
-    if (run >= limit && !isDouble(board[i - 1])) {
-      dir = ((dir + 1) % 4) as Dir;
+    const tile = board[i] as Placed;
+    if (run >= limit && !isDouble(board[i - 1]) && !isDouble(tile)) {
+      const next = nextDir(dir, lastH, 1);
+      if (next === 0 || next === 2) lastH = next;
+      cursor = turnCursor(cursor, dir, next, lastAcross, size(tile).across);
+      dir = next;
       run = 0;
       limit = runLimit(dir);
     }
-    cursor = put(board[i] as Placed, i, dir, cursor.x, cursor.y);
+    cursor = put(tile, i, dir, cursor.x, cursor.y);
+    lastAcross = size(tile).across;
     run++;
   }
 
@@ -1017,13 +1073,20 @@ function layoutChain(
   let backRun = 1;
   let backLimit = MAX_RUN - halfRun;
   let backCursor = { x: 0, y: 0 };
+  let backAcross = size(board[openerIndex] as Placed).across;
+  let lastBackH: Dir = 2;
   for (let i = openerIndex - 1; i >= 0; i--) {
-    if (backRun >= backLimit && !isDouble(board[i + 1])) {
-      back = ((back + 1) % 4) as Dir;
+    const tile = board[i] as Placed;
+    if (backRun >= backLimit && !isDouble(board[i + 1]) && !isDouble(tile)) {
+      const next = nextDir(back, lastBackH, 3);
+      if (next === 0 || next === 2) lastBackH = next;
+      backCursor = turnCursor(backCursor, back, next, backAcross, size(tile).across);
+      back = next;
       backRun = 0;
       backLimit = runLimit(back);
     }
-    backCursor = put(board[i] as Placed, i, back, backCursor.x, backCursor.y, true);
+    backCursor = put(tile, i, back, backCursor.x, backCursor.y, true);
+    backAcross = size(tile).across;
     backRun++;
   }
 
