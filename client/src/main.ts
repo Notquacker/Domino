@@ -593,6 +593,19 @@ function renderLanding(): HTMLElement {
     el('p', 'note', 'Go out on a tile that fits both open ends and the round is worth 2 instead of 1.'),
   );
 
+  const anyDouble = el('label');
+  const anyDoubleBox = el('input') as HTMLInputElement;
+  anyDoubleBox.type = 'checkbox';
+  anyDoubleBox.id = 'anydouble';
+  anyDoubleBox.checked = true;
+  anyDoubleBox.style.width = 'auto';
+  anyDouble.appendChild(anyDoubleBox);
+  anyDouble.appendChild(el('span', 'grow', 'The 6-6 holder may open with any double'));
+  rulesBox.appendChild(anyDouble);
+  rulesBox.appendChild(
+    el('p', 'note', 'Whoever holds the 6-6 still leads the first round. Turn this off and they must lay the 6-6 itself; leave it on and they may open with whichever double they like.'),
+  );
+
   const countAll = el('label');
   const countAllBox = el('input') as HTMLInputElement;
   countAllBox.type = 'checkbox';
@@ -632,6 +645,7 @@ function renderLanding(): HTMLElement {
         drawAt: !pips && drawBox.checked ? 5 : null,
         falsePassPenalty: penaltyBox.checked ? 1 : 0,
         capicuPoints: capicuBox.checked ? (pips ? 25 : 2) : 0,
+        openWithAnyDouble: anyDoubleBox.checked,
         countAllRemaining: countAllBox.checked,
       },
     };

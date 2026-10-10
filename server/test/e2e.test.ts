@@ -194,7 +194,7 @@ describe('a full four-player match over the wire', () => {
     stray.close();
   });
 
-  it('deals seven tiles each and opens with the 6-6', async () => {
+  it('deals seven tiles each and gives the lead to the 6-6 holder', async () => {
     const host = clients[0]!;
     host.send({ t: 'start' });
     await host.until(() => host.view!.phase === 'playing', 'the match to start');
@@ -216,12 +216,22 @@ describe('a full four-player match over the wire', () => {
       'the server must not tell a player what they can play',
     );
 
-    // And the rule is still enforced: another tile is refused.
-    const other = opener.view!.hand.find((t) => t !== '6-6')!;
+    // The opening rule is still enforced over the wire. Under the house rule
+    // the opener may lead with any double, so the tile that must be refused is
+    // one that is NOT a double — picking "anything but the 6-6" would land on a
+    // legal double and quietly succeed.
+    const plain = opener.view!.hand.find((t) => {
+      const [a, b] = t.split('-');
+      return a !== b;
+    });
+    assert.ok(plain, 'the opener should hold at least one tile that is not a double');
     opener.errors = [];
-    opener.send({ t: 'move', move: { kind: 'play', tile: other, end: 'right' } });
+    opener.send({ t: 'move', move: { kind: 'play', tile: plain, end: 'right' } });
     await opener.until(() => opener.errors.length > 0, 'the opener to be refused');
     assert.match(opener.errors[0]!, /illegal move/);
+
+    // Nothing reached the board, so the deal is still whole for the next test.
+    assert.equal(opener.view!.board.length, 0, 'the refused tile must not have been laid');
   });
 
   it('never sends a player another player’s tiles', () => {

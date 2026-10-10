@@ -15,6 +15,7 @@
       winBy: 1,
       drawAt: 5,
       mustOpenDoubleSix: true,
+      openWithAnyDouble: true,
       strictPassing: false,
       falsePassPenalty: 1,
       countAllRemaining: false,
@@ -292,6 +293,7 @@
     toggle('falsepass', 'Point against a false pass', 'falsePassPenalty', 1);
     toggle('capicu', 'Capicú counts double', 'capicuPoints', 2);
     toggle('double6', 'First round opens with the 6-6', 'mustOpenDoubleSix');
+    toggle('anydouble', 'The 6-6 holder may open with any double', 'openWithAnyDouble');
 
     var soloRow = el('label', 'optrow');
     var soloBox = el('input');
@@ -311,6 +313,7 @@
     var ul = el('ul', 'ruleslist');
     [
       'All 28 tiles are dealt, seven each — there is no boneyard to draw from.',
+      'Whoever holds the 6-6 opens the first round, and may lead with any double they hold.',
       'If nothing fits either open end you pass. If something fits, you must play it.',
       'A round ends when someone plays their last tile, or when all four are stuck.',
       'The winning team scores the pips left in the opponents’ hands.',

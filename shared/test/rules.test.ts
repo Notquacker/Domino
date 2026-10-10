@@ -38,7 +38,7 @@ function round(over: Partial<RoundState> = {}): RoundState {
     turn: 0,
     passes: 0,
     starter: 0,
-    requireTile: null,
+    opening: null,
     passLog: [],
     openerTile: null,
     ...over,
@@ -103,23 +103,36 @@ describe('dealing', () => {
 
   it('opens the first round with whoever holds the 6-6', () => {
     for (let seed = 1; seed <= 25; seed++) {
-      const r = dealRound(rules(), 1, null, seededRng(seed));
-      assert.equal(r.requireTile, '6-6');
+      const r = dealRound(rules({ openWithAnyDouble: false }), 1, null, seededRng(seed));
+      assert.deepEqual(r.opening, { kind: 'tile', tile: '6-6' });
       assert.ok(r.hands[r.turn]!.includes('6-6'), 'opener does not hold the 6-6');
+    }
+  });
+
+  it('lets the 6-6 holder open with any double when the house rule is on', () => {
+    for (let seed = 1; seed <= 25; seed++) {
+      const r = dealRound(rules(), 1, null, seededRng(seed));
+      assert.deepEqual(r.opening, { kind: 'double' });
+      assert.ok(r.hands[r.turn]!.includes('6-6'), 'the 6-6 still decides who leads');
     }
   });
 
   it('lets the previous winner open later rounds with any tile', () => {
     const r = dealRound(rules(), 3, 2, seededRng(7));
     assert.equal(r.turn, 2);
-    assert.equal(r.requireTile, null);
+    assert.equal(r.opening, null);
     assert.equal(legalMoves(r, 2).length, 7, 'every tile should be a legal opener');
   });
 
   it('honours the house rule that drops the forced 6-6 opening', () => {
     const r = dealRound(rules({ mustOpenDoubleSix: false }), 1, 3, seededRng(4));
-    assert.equal(r.requireTile, null);
+    assert.equal(r.opening, null);
     assert.equal(r.turn, 3);
+  });
+
+  it('still ignores the any-double rule when nothing forces the opening', () => {
+    const r = dealRound(rules({ mustOpenDoubleSix: false, openWithAnyDouble: true }), 1, 3, seededRng(4));
+    assert.equal(r.opening, null, 'with no forced opening the lead is simply free');
   });
 });
 
@@ -161,10 +174,46 @@ describe('placing tiles', () => {
 
 describe('legal moves', () => {
   it('offers only the 6-6 on the opening move of a match', () => {
-    const r = round({ hands: [['6-6', '0-1', '3-4'], [], [], []], requireTile: '6-6' });
+    const r = round({ hands: [['6-6', '0-1', '3-4'], [], [], []], opening: { kind: 'tile', tile: '6-6' } });
     const moves = legalMoves(r, 0);
     assert.equal(moves.length, 1);
     assert.deepEqual(moves[0], { kind: 'play', tile: '6-6', end: 'right' });
+  });
+
+  it('offers every double, and only doubles, under the any-double opening', () => {
+    const r = round({
+      hands: [['6-6', '2-2', '0-0', '0-1', '3-4'], [], [], []],
+      opening: { kind: 'double' },
+    });
+    const moves = legalMoves(r, 0);
+    assert.deepEqual(
+      moves.map((m) => (m.kind === 'play' ? m.tile : m.kind)).sort(),
+      ['0-0', '2-2', '6-6'],
+    );
+  });
+
+  it('leaves the 6-6 playable when it is the holder only double', () => {
+    // The 6-6 holder leads, so the any-double rule can never strand them:
+    // the tile that won them the lead is itself a double.
+    const r = round({ hands: [['6-6', '0-1', '3-4'], [], [], []], opening: { kind: 'double' } });
+    const moves = legalMoves(r, 0);
+    assert.equal(moves.length, 1);
+    assert.deepEqual(moves[0], { kind: 'play', tile: '6-6', end: 'right' });
+  });
+
+  it('never strands the opener under the any-double rule, over many deals', () => {
+    for (let seed = 1; seed <= 200; seed++) {
+      const r = dealRound(rules(), 1, null, seededRng(seed));
+      const moves = legalMoves(r, r.turn);
+      assert.ok(moves.length > 0, `seed ${seed}: opener had no legal opening`);
+      for (const m of moves) {
+        assert.equal(m.kind, 'play');
+        if (m.kind === 'play') {
+          const [a, b] = m.tile.split('-');
+          assert.equal(a, b, `seed ${seed}: ${m.tile} is not a double`);
+        }
+      }
+    }
   });
 
   it('gives nothing to a player who is not on turn', () => {
@@ -240,11 +289,11 @@ describe('making moves', () => {
 
   it('clears the forced opening tile after it is played', () => {
     const m = match(
-      round({ hands: [['6-6', '0-1'], ['1-2'], ['2-3'], ['3-4']], requireTile: '6-6' }),
+      round({ hands: [['6-6', '0-1'], ['1-2'], ['2-3'], ['3-4']], opening: { kind: 'tile', tile: '6-6' } }),
       { roundNumber: 1 },
     );
     const after = applyMove(m, 0, { kind: 'play', tile: '6-6', end: 'right' });
-    assert.equal(after.match.round!.requireTile, null);
+    assert.equal(after.match.round!.opening, null);
   });
 });
 
@@ -897,7 +946,7 @@ describe('remembering the opening tile', () => {
   it('records the first tile played and never changes it', () => {
     // Seat 1 must hold a six, or the round blocks the moment the 6-6 is down.
     const m = match(
-      round({ hands: [['6-6', '0-1'], ['1-6', '2-2'], ['2-3'], ['3-4']], requireTile: '6-6' }),
+      round({ hands: [['6-6', '0-1'], ['1-6', '2-2'], ['2-3'], ['3-4']], opening: { kind: 'tile', tile: '6-6' } }),
       { roundNumber: 1 },
     );
     assert.equal(m.round!.openerTile, null, 'nothing opened yet');

@@ -17,6 +17,7 @@ import {
   type TileId,
   fullSet,
   handPips,
+  isDouble,
   parseTile,
   shuffle,
 } from './tiles.js';
@@ -87,6 +88,13 @@ export interface HouseRules {
   /** First round of a match is opened by whoever holds the 6-6, who must play it. */
   readonly mustOpenDoubleSix: boolean;
   /**
+   * Relaxes that opening. The 6-6 still decides who leads, but that player may
+   * lead with whichever double they like rather than being made to lay the 6-6
+   * itself. They always hold at least one double — the 6-6 — so the lead can
+   * never be stuck. Ignored when mustOpenDoubleSix is off.
+   */
+  readonly openWithAnyDouble: boolean;
+  /**
    * When true a player may only pass with nothing playable — the engine
    * refuses any other pass. When false (the default) passing is a choice, and
    * a pass made while holding a playable tile is punished at the end of the
@@ -122,6 +130,7 @@ export const DEFAULT_RULES: HouseRules = {
   winBy: 1,
   drawAt: 5,
   mustOpenDoubleSix: true,
+  openWithAnyDouble: true,
   strictPassing: false,
   falsePassPenalty: 1,
   countAllRemaining: false,
@@ -146,6 +155,11 @@ export interface PassRecord {
   readonly couldHavePlayed: boolean;
 }
 
+/** How the opening tile of a round is constrained. */
+export type OpeningRequirement =
+  | { readonly kind: 'tile'; readonly tile: TileId }
+  | { readonly kind: 'double' };
+
 export interface RoundState {
   /** Hands by seat. Server-only — never serialised to a client. */
   readonly hands: readonly (readonly TileId[])[];
@@ -154,8 +168,19 @@ export interface RoundState {
   /** Consecutive passes; four in a row means the round is blocked. */
   readonly passes: number;
   readonly starter: Seat;
-  /** Forces the opening tile (the 6-6) on the first round of a match. */
-  readonly requireTile: TileId | null;
+  /**
+   * What the first tile of the round must be, when it is constrained at all.
+   *
+   * `{ kind: 'tile' }` pins it to one tile — the 6-6 under the standard
+   * opening. `{ kind: 'double' }` is the house rule that lets whoever holds
+   * the 6-6 lead with any double in their hand. Null leaves the lead free,
+   * which is every round after the first.
+   *
+   * This cannot be a plain TileId: TileId is a string, so a sentinel like
+   * 'any-double' would satisfy the type checker and then quietly match no
+   * tile at all.
+   */
+  readonly opening: OpeningRequirement | null;
   /** Every pass this round, judged at the moment it was made. */
   readonly passLog: readonly PassRecord[];
   /**
@@ -266,8 +291,13 @@ export function legalMoves(
   const ends = openEnds(round.board);
 
   if (ends === null) {
+    const want = round.opening;
     const candidates =
-      round.requireTile === null ? hand : hand.filter((id) => id === round.requireTile);
+      want === null
+        ? hand
+        : want.kind === 'tile'
+          ? hand.filter((id) => id === want.tile)
+          : hand.filter((id) => isDouble(id));
     return candidates.map((id) => ({ kind: 'play', tile: id, end: 'right' }) as const);
   }
 
@@ -307,9 +337,10 @@ export function isLegal(
 // ---------------------------------------------------------------------------
 
 /**
- * Deal a fresh round. On the opening round of a match the 6-6 both decides who
- * leads and must be the first tile played; afterwards the previous round's
- * winner leads with any tile.
+ * Deal a fresh round. On the opening round of a match the 6-6 decides who
+ * leads; whether that player must lay the 6-6 itself or may lead with any
+ * double is up to the house rules. Afterwards the previous round's winner
+ * leads with any tile.
  */
 export function dealRound(
   rules: HouseRules,
@@ -326,11 +357,13 @@ export function dealRound(
 
   const openingRound = roundNumber === 1 && rules.mustOpenDoubleSix;
   let turn: Seat;
-  let requireTile: TileId | null = null;
+  let opening: OpeningRequirement | null = null;
 
   if (openingRound) {
     turn = SEATS.find((s) => (hands[s] as TileId[]).includes(DOUBLE_SIX)) ?? 0;
-    requireTile = DOUBLE_SIX;
+    opening = rules.openWithAnyDouble
+      ? { kind: 'double' }
+      : { kind: 'tile', tile: DOUBLE_SIX };
   } else {
     turn = starter ?? 0;
   }
@@ -341,7 +374,7 @@ export function dealRound(
     turn,
     passes: 0,
     starter: turn,
-    requireTile,
+    opening,
     passLog: [],
     openerTile: null,
   };
@@ -486,7 +519,7 @@ export function applyMove(match: MatchState, seat: Seat, move: Move): MoveOutcom
     board,
     passes: 0,
     turn: nextSeat(round.turn),
-    requireTile: null,
+    opening: null,
     openerTile: openingPlay ? move.tile : round.openerTile,
   };
 

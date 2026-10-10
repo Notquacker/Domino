@@ -26,7 +26,10 @@ Curaçao-style partnership dominoes:
   the round, **a pass made on a tile you could have played gives the other
   team a point**. Bluff at your own risk.
 - **Somebody has to lead**, so the opening tile cannot be passed.
-- **The 6-6 opens the first round** of a match, and whoever holds it leads.
+- **The 6-6 decides who leads the first round** of a match. By default that
+  player may open with **any double they like**, not necessarily the 6-6
+  itself — they always hold at least one, so the lead is never stuck. Turn
+  *"the 6-6 holder may open with any double"* off to make them lay the 6-6.
   Afterwards the previous round's winner leads with any tile.
 - **A round ends** when someone plays their last tile, or when all four pass
   in turn.
