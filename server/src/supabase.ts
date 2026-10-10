@@ -40,6 +40,19 @@ export interface MatchRecord {
   readonly players: readonly MatchPlayerRecord[];
 }
 
+/** One row of the accounts table, exactly as Postgres stores it. */
+export interface AccountRow {
+  readonly id: string;
+  readonly display: string;
+  readonly salt: string;
+  readonly hash: string;
+  readonly is_admin: boolean;
+  readonly wins: number;
+  readonly matches: number;
+  readonly must_change_password: boolean;
+  readonly created_at: string;
+}
+
 export interface SupabaseOptions {
   readonly url: string;
   readonly serviceRoleKey: string;
@@ -128,6 +141,55 @@ export class Supabase {
   /** Write a finished match and its four seats, atomically, server-side. */
   async recordMatch(record: MatchRecord): Promise<void> {
     await this.rpc('record_match', { payload: record });
+  }
+
+  // -- leaderboard accounts --------------------------------------------------
+  //
+  // These do NOT swallow their errors, unlike everything above. A lost match
+  // history row costs a line in a table nobody is looking at; a lost password
+  // change locks someone out of their account the next time the server
+  // restarts. The caller is told, so it can tell the player.
+
+  async loadAccounts(): Promise<AccountRow[]> {
+    const res = await this.accountsFetch('?select=*', { method: 'GET' });
+    return (await res.json()) as AccountRow[];
+  }
+
+  /** Insert or replace one account. */
+  async putAccount(row: AccountRow): Promise<void> {
+    await this.accountsFetch('', {
+      method: 'POST',
+      headers: { prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(row),
+    });
+  }
+
+  async deleteAccount(id: string): Promise<void> {
+    await this.accountsFetch(`?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  private async accountsFetch(
+    query: string,
+    init: { method: string; headers?: Record<string, string>; body?: string },
+  ): Promise<Response> {
+    if (!this.enabled) throw new Error('Supabase is not configured');
+    const res = await fetch(`${this.url}/rest/v1/domino_accounts${query}`, {
+      method: init.method,
+      headers: {
+        'content-type': 'application/json',
+        apikey: this.serviceRoleKey,
+        authorization: `Bearer ${this.serviceRoleKey}`,
+        ...init.headers,
+      },
+      ...(init.body !== undefined ? { body: init.body } : {}),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      // The body can echo the row back, so never put it in an error a player
+      // might see. The status is enough to act on.
+      throw new Error(`accounts store returned ${res.status}`);
+    }
+    return res;
   }
 
   /**

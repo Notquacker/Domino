@@ -150,17 +150,41 @@ remove its own admin rights, or delete itself, either of which would leave
 the table with no admin at all. A password an admin sets is marked temporary,
 and its owner is prompted to choose their own.
 
-### Where it is stored, and when it is lost
+### Where it is stored
 
-Accounts live in **`data/accounts.json`** (set `DATA_DIR` to move it), written
-to a temporary file and renamed so a crash mid-write cannot destroy what was
-there. It is gitignored: it holds password hashes.
+**Supabase, when it is configured.** Set `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` and accounts go to the `domino_accounts` table,
+which survives the container being rebuilt. Run both migrations in
+`supabase/migrations/`, then `npm run verify:supabase` to check the schema is
+applied and locked down.
 
-**A container that restarts from its image loses files written at runtime.**
-On a host like that — a free-tier web service with no persistent disk — the
-leaderboard resets on every redeploy. For it to last, point `DATA_DIR` at a
-mounted disk, or move the store to Supabase, which this project is already
-wired for.
+That table is reachable by **nobody but the server**. Row level security is on
+with no policies at all, and the grants are revoked besides, so a request
+arriving as `anon` or `authenticated` matches nothing and is refused. Only the
+service role, which bypasses RLS and which only the server holds, can read a
+hash. `verify:supabase` tries to read one with the anon key and fails the run
+if it succeeds.
+
+**A plain file otherwise**, at `data/accounts.json` (`DATA_DIR` moves it),
+written to a temporary file and renamed so a crash mid-write cannot destroy
+what was there. It is gitignored: it holds password hashes. This needs no
+setup and works anywhere — but **a container that restarts from its image
+loses files written at runtime**, so on a free-tier host with no persistent
+disk the leaderboard resets on every redeploy. The server warns on boot when
+it is using the file.
+
+### When the store cannot be reached
+
+If the accounts store fails to read at startup, the server still comes up and
+the game still plays — but signing in refuses, politely, and **nothing is
+written**. That last part is the point: carrying on as though there were
+simply no accounts would let the first write replace the real rows with an
+empty set, and would recreate the admin with the placeholder password over
+the top of a chosen one.
+
+A write that fails is rolled back rather than reported as done. Telling
+someone their password changed when it did not would lock them out at the
+next restart.
 
 ### Whose turn it is
 

@@ -11,7 +11,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { AccountError, Accounts } from '../dist/accounts.js';
+import { AccountError, Accounts, SupabaseAccountStorage } from '../dist/accounts.js';
 
 let dir: string;
 
@@ -240,5 +240,122 @@ describe('the admin', () => {
     const after = new Accounts(path);
     await after.load();
     assert.equal(after.count(), 0, 'a broken file must not stop the server starting');
+  });
+});
+
+describe('accounts kept in Supabase', () => {
+  /** A stand-in for the table, so the adapter is exercised for real. */
+  function fakeApi() {
+    const rows = new Map<string, Record<string, unknown>>();
+    let failNext: string | null = null;
+    return {
+      rows,
+      /** Make the next call of this kind fail, to test what happens then. */
+      breakOn(kind: 'load' | 'put' | 'delete' | null): void {
+        failNext = kind;
+      },
+      loadAccounts: async () => {
+        if (failNext === 'load') throw new Error('accounts store returned 503');
+        return [...rows.values()] as never;
+      },
+      putAccount: async (row: { id: string }) => {
+        if (failNext === 'put') {
+          failNext = null;
+          throw new Error('accounts store returned 500');
+        }
+        rows.set(row.id, { ...row });
+      },
+      deleteAccount: async (id: string) => {
+        if (failNext === 'delete') throw new Error('accounts store returned 500');
+        rows.delete(id);
+      },
+    };
+  }
+
+  it('writes a hash to the table and never the password', async () => {
+    const api = fakeApi();
+    const store = new Accounts(new SupabaseAccountStorage(api));
+    await store.load();
+    await store.register('Xay', 'qwerty', true);
+
+    const row = api.rows.get('xay') as Record<string, unknown>;
+    assert.ok(row, 'the account reached the table');
+    assert.equal(row['display'], 'Xay');
+    assert.equal(row['is_admin'], true);
+    assert.ok(!JSON.stringify(row).includes('qwerty'), 'the password reached the table');
+    assert.ok(typeof row['hash'] === 'string' && (row['hash'] as string).length > 20);
+    assert.ok(typeof row['salt'] === 'string');
+  });
+
+  it('comes back after a restart with passwords and wins intact', async () => {
+    const api = fakeApi();
+    const first = new Accounts(new SupabaseAccountStorage(api));
+    await first.load();
+    await first.register('Pico', 'picopass');
+    await first.recordResult(['pico'], ['pico']);
+
+    // A new process, same table.
+    const second = new Accounts(new SupabaseAccountStorage(api));
+    await second.load();
+    assert.notEqual(await second.authenticate('Pico', 'picopass'), null, 'password survived');
+    assert.equal(second.get('pico')!.wins, 1, 'the win survived');
+    assert.equal(second.leaderboard()[0]!.username, 'Pico');
+  });
+
+  it('refuses to sign anyone in when the table cannot be read', async () => {
+    const api = fakeApi();
+    api.breakOn('load');
+    const store = new Accounts(new SupabaseAccountStorage(api));
+    await store.load();
+
+    assert.equal(store.usable, false, 'the store knows it did not load');
+    // Crucially it must NOT behave as though there are simply no accounts,
+    // which would let the next write wipe the real ones.
+    await assert.rejects(() => store.authenticate('Xay', 'qwerty'), /unavailable/);
+    await assert.rejects(() => store.register('Xay', 'qwerty'), /unavailable/);
+    assert.equal(api.rows.size, 0, 'nothing was written over the top');
+  });
+
+  it('does not pretend a password changed when the write failed', async () => {
+    const api = fakeApi();
+    const store = new Accounts(new SupabaseAccountStorage(api));
+    await store.load();
+    const pico = await store.register('Pico', 'picopass');
+    const session = store.startSession(pico);
+
+    api.breakOn('put');
+    await assert.rejects(() => store.setPassword(pico, 'brandnew', false), /500/);
+
+    // The old password must still work, in memory and on the next restart.
+    assert.notEqual(await store.authenticate('Pico', 'picopass'), null, 'old password kept');
+    assert.equal(await store.authenticate('Pico', 'brandnew'), null, 'new one never took');
+    assert.notEqual(store.fromSession(session), null, 'a session was not revoked for nothing');
+
+    const again = new Accounts(new SupabaseAccountStorage(api));
+    await again.load();
+    assert.notEqual(await again.authenticate('Pico', 'picopass'), null, 'and after a restart');
+  });
+
+  it('does not leave an account that failed to save looking real', async () => {
+    const api = fakeApi();
+    const store = new Accounts(new SupabaseAccountStorage(api));
+    await store.load();
+    api.breakOn('put');
+    await assert.rejects(() => store.register('Ghost', 'ghostpass'), /500/);
+    assert.equal(store.get('ghost'), null, 'it must not linger in memory either');
+    assert.equal(api.rows.size, 0);
+    // And the name is free to try again with.
+    await store.register('Ghost', 'ghostpass');
+    assert.notEqual(store.get('ghost'), null);
+  });
+
+  it('deletes an account from the table', async () => {
+    const api = fakeApi();
+    const store = new Accounts(new SupabaseAccountStorage(api));
+    await store.load();
+    const gone = await store.register('Temp', 'temppass');
+    assert.equal(api.rows.size, 1);
+    await store.remove(gone);
+    assert.equal(api.rows.size, 0, 'the row went too, not just the memory');
   });
 });

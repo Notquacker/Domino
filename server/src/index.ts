@@ -10,7 +10,13 @@ import { createReadStream, promises as fs } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { type Account, AccountError, Accounts } from './accounts.js';
+import {
+  type Account,
+  AccountError,
+  Accounts,
+  FileAccountStorage,
+  SupabaseAccountStorage,
+} from './accounts.js';
 import {
   type ClientMessage,
   type Move,
@@ -73,11 +79,18 @@ function sendTo(socket: WebSocket, message: unknown): void {
 const supabase = Supabase.fromEnv();
 
 /**
- * Where the leaderboard lives. A plain file, so it can be read, copied and
- * backed up without any tooling. DATA_DIR points it somewhere durable; see
- * the README on hosts whose filesystem does not survive a redeploy.
+ * Where the leaderboard lives.
+ *
+ * Supabase when it is configured, because a container that restarts from its
+ * image loses anything written to its own filesystem, and a leaderboard that
+ * resets on every deploy is not a leaderboard. A plain JSON file otherwise,
+ * which works anywhere and needs no setup.
  */
-const accounts = new Accounts(process.env['DATA_DIR'] ?? resolve(HERE, '../../data'));
+const accounts = new Accounts(
+  supabase.enabled
+    ? new SupabaseAccountStorage(supabase)
+    : new FileAccountStorage(process.env['DATA_DIR'] ?? resolve(HERE, '../../data')),
+);
 const ADMIN_NAME = process.env['ADMIN_USERNAME'] ?? 'Xay';
 const ADMIN_FALLBACK_PASSWORD = 'qwerty';
 
@@ -531,7 +544,11 @@ setInterval(() => {
 
 async function boot(): Promise<void> {
   await accounts.load();
-  const admin = await accounts.ensureAdmin(ADMIN_NAME, ADMIN_FALLBACK_PASSWORD);
+  // Only seed the admin when the store actually read. Doing it blind after a
+  // failed read would write the placeholder password over a real account.
+  const admin = accounts.usable
+    ? await accounts.ensureAdmin(ADMIN_NAME, ADMIN_FALLBACK_PASSWORD)
+    : { created: false, usingFallback: false };
 
   http.listen(PORT, HOST, () => {
     console.log(`[domino] listening on http://${HOST}:${PORT}`);
@@ -540,7 +557,21 @@ async function boot(): Promise<void> {
         ? '[domino] match history enabled'
         : '[domino] no Supabase configured — match history off',
     );
-    console.log(`[domino] ${accounts.count()} account(s) loaded`);
+    if (accounts.usable) {
+      console.log(`[domino] ${accounts.count()} account(s) loaded from ${accounts.label}`);
+    } else {
+      console.error(
+        `[domino] accounts are OFF: ${accounts.label} could not be read. ` +
+          'The game still plays; signing in does not.',
+      );
+    }
+    if (!supabase.enabled) {
+      console.warn(
+        '[domino] accounts are in a local file — a host that rebuilds its ' +
+          'container will lose them. Set SUPABASE_URL and ' +
+          'SUPABASE_SERVICE_ROLE_KEY to keep them.',
+      );
+    }
     if (admin.usingFallback) {
       // Said plainly and every boot, because a known default password on a
       // public URL is exactly the thing that gets forgotten about.

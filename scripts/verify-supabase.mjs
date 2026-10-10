@@ -93,9 +93,49 @@ for (const table of ['profiles', 'matches', 'match_players', 'player_stats']) {
   else fail(`table/view "${table}" missing`, `${res.status} — run supabase/migrations/0001_init.sql`);
 }
 
+{
+  const res = await call('/rest/v1/domino_accounts?limit=1', { key: SERVICE_KEY });
+  if (res.ok) pass('table "domino_accounts" exists');
+  else {
+    fail(
+      'table "domino_accounts" missing',
+      `${res.status} — run supabase/migrations/0002_accounts.sql, or the leaderboard will not save`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 2. Is anonymous sign-in switched on? (off by default)
 // ---------------------------------------------------------------------------
+
+// The accounts table holds password hashes. Nothing but the service role may
+// touch it, which makes these the most important checks in this file.
+if (ANON_KEY) {
+  const peek = await call('/rest/v1/domino_accounts?select=id,hash&limit=1', { key: ANON_KEY });
+  if (peek.ok) {
+    fail(
+      'password hashes are not readable by a client',
+      'the request SUCCEEDED — RLS is not protecting domino_accounts. ' +
+        'Re-run supabase/migrations/0002_accounts.sql.',
+    );
+  } else {
+    pass('password hashes are not readable by a client', `refused with ${peek.status}`);
+  }
+
+  const poke = await call('/rest/v1/domino_accounts', {
+    method: 'POST',
+    key: ANON_KEY,
+    body: { id: 'intruder', display: 'intruder', salt: 'x', hash: 'x' },
+  });
+  if (poke.ok) {
+    fail(
+      'clients cannot create an account directly',
+      'the insert SUCCEEDED — anyone could grant themselves an account',
+    );
+  } else {
+    pass('clients cannot create an account directly', `refused with ${poke.status}`);
+  }
+}
 
 let anonSession = null;
 if (!ANON_KEY) {
