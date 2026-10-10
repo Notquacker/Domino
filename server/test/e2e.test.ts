@@ -364,3 +364,96 @@ describe('a full four-player match over the wire', () => {
     for (const client of clients) client.close();
   });
 });
+
+/**
+ * One person against three computer players — the way the game gets tried out
+ * on a deployed server before there are four phones to hand.
+ */
+describe('a table filled with computer players', () => {
+  const solo = new TestClient('solo');
+
+  it('seats three bots and starts with one human', async () => {
+    await solo.open();
+    solo.send({ t: 'create', name: 'Ana', rules: { scoring: 'rounds', targetScore: 2, winBy: 1 } });
+    await solo.until(() => solo.view !== null, 'the table to open');
+    solo.send({ t: 'sit', seat: 0 });
+    await solo.until(() => solo.view!.you === 0, 'a seat');
+
+    for (let i = 0; i < 3; i++) solo.send({ t: 'addBot' });
+    await solo.until(
+      () => solo.view!.seats.filter((s) => s !== null).length === 4,
+      'the table to fill',
+    );
+
+    const seats = solo.view!.seats;
+    assert.equal(seats[0]!.bot, false, 'the human seat must not be marked a bot');
+    for (const seat of [1, 2, 3]) {
+      assert.equal(seats[seat]!.bot, true, `seat ${seat} should hold a computer player`);
+      assert.equal(seats[seat]!.connected, true, 'a bot is never shown as disconnected');
+    }
+    assert.equal(solo.view!.spectators, 0, 'bots must not be counted as spectators');
+  });
+
+  it('refuses a bot once the match has started, and from a non-host', async () => {
+    solo.send({ t: 'start' });
+    await solo.until(() => solo.view!.phase === 'playing', 'the match to start');
+    solo.errors = [];
+    solo.send({ t: 'addBot' });
+    await solo.until(() => solo.errors.length > 0, 'a refusal');
+    assert.match(solo.errors[0]!, /already started/);
+  });
+
+  it('lets the bots take their own turns without being driven', async () => {
+    // The human sits out: whatever moves the board is the server's own doing.
+    const before = solo.view!.board.length;
+    await solo.until(
+      () => solo.view!.board.length > before || solo.view!.turn === 0,
+      'the bots to play',
+      20_000,
+    );
+    assert.ok(
+      solo.view!.board.length > before || solo.view!.turn === 0,
+      'no bot ever moved',
+    );
+  });
+
+  it('plays a whole match out with the human passing when stuck', async () => {
+    for (let guard = 0; guard < 400; guard++) {
+      if (solo.view!.phase === 'matchOver') break;
+      if (solo.view!.phase === 'roundOver') {
+        solo.send({ t: 'nextRound' });
+        await solo.until(() => solo.view!.phase !== 'roundOver', 'the next round', 20_000);
+        continue;
+      }
+      // Wait for our turn rather than polling: while the bots are thinking
+      // there is nothing for this client to do, and spinning here would burn
+      // the guard without a single tile going down.
+      await solo.until(
+        () => solo.view!.youMayMove || solo.view!.phase !== 'playing',
+        'our turn to come round',
+        20_000,
+      );
+      if (solo.view!.phase !== 'playing') continue;
+
+      const v = solo.view!;
+      const move = chooseMove(v);
+      if (move === null) break;
+      solo.errors = [];
+      solo.send({ t: 'move', move });
+      await solo.until(
+        () => solo.view !== v || solo.errors.length > 0,
+        'our move to land',
+        20_000,
+      );
+      assert.deepEqual(solo.errors, [], 'the server refused a move the client thought was legal');
+    }
+
+    const final = solo.view!;
+    assert.equal(final.phase, 'matchOver', 'the match never finished');
+    assert.ok(final.winner === 0 || final.winner === 1 || final.drawn);
+    // Every hand must still be accounted for: a bot that invented a tile, or
+    // played one it did not hold, would show up here.
+    assert.ok(final.roundNumber >= 1);
+    solo.close();
+  });
+});

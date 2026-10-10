@@ -769,8 +769,17 @@ function renderLobby(v: PlayerView): HTMLElement {
     } else {
       row.appendChild(el('span', `dot${info.connected ? '' : ' off'}`));
       row.appendChild(
-        el('span', 'who', info.name + (v.you === seat ? ' (you)' : '')),
+        el(
+          'span',
+          'who',
+          info.name + (v.you === seat ? ' (you)' : info.bot ? ' · computer' : ''),
+        ),
       );
+      if (info.bot && v.isHost) {
+        const drop = el('button', 'ghost small', 'Remove') as HTMLButtonElement;
+        drop.addEventListener('click', () => net.send({ t: 'removeBot', seat }));
+        row.appendChild(drop);
+      }
     }
     list.appendChild(row);
   }
@@ -781,6 +790,22 @@ function renderLobby(v: PlayerView): HTMLElement {
   wrap.appendChild(seatCard);
 
   const seated = v.seats.filter((s) => s !== null).length;
+  if (v.isHost && seated < 4) {
+    const fill = el('div', 'seatfill');
+    const addOne = el('button', 'ghost small', 'Add a computer player') as HTMLButtonElement;
+    addOne.addEventListener('click', () => net.send({ t: 'addBot' }));
+    fill.appendChild(addOne);
+    const fillAll = el('button', 'ghost small', `Fill the table (${4 - seated})`) as HTMLButtonElement;
+    fillAll.addEventListener('click', () => {
+      for (let i = seated; i < 4; i++) net.send({ t: 'addBot' });
+    });
+    fill.appendChild(fillAll);
+    seatCard.appendChild(fill);
+    seatCard.appendChild(
+      el('p', 'hint', 'Computer players fill the empty seats so you can try a table on your own.'),
+    );
+  }
+
   const actions = el('div', 'card');
   if (v.isHost) {
     const start = el('button', 'gold', seated === 4 ? 'Start the match' : `Waiting for ${4 - seated} more`) as HTMLButtonElement;

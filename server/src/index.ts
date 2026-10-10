@@ -256,6 +256,14 @@ async function handle(socket: WebSocket, session: Session, msg: ClientMessage): 
       room.stand(player);
       room.broadcastState();
       return;
+    case 'addBot':
+      room.addBot(player);
+      room.broadcastState();
+      return;
+    case 'removeBot':
+      room.removeBot(player, parseSeat(msg.seat));
+      room.broadcastState();
+      return;
     case 'start':
       room.start(player);
       room.broadcastState();

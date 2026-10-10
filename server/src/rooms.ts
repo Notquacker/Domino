@@ -9,10 +9,12 @@
 
 import { randomBytes, randomInt } from 'node:crypto';
 import type { AuthedUser, MatchPlayerRecord, MatchRecord, Supabase } from './supabase.js';
+import { type BotContext, BOT_NAMES, chooseMove } from './bot.js';
 import {
   type HouseRules,
   type MatchState,
   type Move,
+  type Pip,
   type PlayerView,
   type RoundResult,
   type ScoringMode,
@@ -36,6 +38,9 @@ import {
 
 /** Seconds a player has to move before the server plays for them. */
 export const TURN_SECONDS = 60;
+
+/** How long a computer player appears to think before it plays. */
+export const BOT_THINK_MS = 900;
 /** A room with no connected players is reclaimed after this long. */
 export const ROOM_IDLE_MS = 30 * 60 * 1000;
 const MAX_LOG = 60;
@@ -54,6 +59,8 @@ export interface Player {
   lastSeen: number;
   /** Supabase account, when the connection presented a valid token. */
   user: AuthedUser | null;
+  /** A computer player: it holds a seat but never has a socket. */
+  readonly isBot: boolean;
 }
 
 export type Broadcast = (player: Player, message: unknown) => void;
@@ -143,6 +150,14 @@ export class Room {
   private smashedThisRound = false;
   /** Guards against writing the same finished match more than once. */
   private recorded = false;
+  /**
+   * Pips each seat has publicly shown they cannot match, from the passes made
+   * this round. Rebuilt every round. This is open information — the ends were
+   * on the table when the pass was made — and it is what lets a computer
+   * player read the game instead of guessing.
+   */
+  private voids: Pip[][] = [[], [], [], []];
+  private botTimer: NodeJS.Timeout | null = null;
 
   constructor(
     code: string,
@@ -164,10 +179,49 @@ export class Room {
       socket: null,
       lastSeen: Date.now(),
       user,
+      isBot: false,
     };
     this.players.set(player.id, player);
     if (this.hostId === null) this.hostId = player.id;
     return player;
+  }
+
+  /**
+   * Seat a computer player. Lobby only, host only, and never as the host
+   * itself: a room whose host is a bot could never be started or dealt.
+   */
+  addBot(by: Player): Player {
+    if (this.hostId !== by.id) throw new RuleError('only the host can add a computer player');
+    if (this.match !== null) throw new RuleError('the match has already started');
+    const seat = SEATS.find((s) => this.playerAtSeat(s) === null);
+    if (seat === undefined) throw new RuleError('every seat is taken');
+    const taken = new Set([...this.players.values()].map((p) => p.name));
+    const name = BOT_NAMES.find((n) => !taken.has(n)) ?? `Bot ${seat + 1}`;
+    const bot: Player = {
+      id: randomBytes(16).toString('hex'),
+      name,
+      seat,
+      socket: null,
+      lastSeen: Date.now(),
+      user: null,
+      isBot: true,
+    };
+    this.players.set(bot.id, bot);
+    return bot;
+  }
+
+  removeBot(by: Player, seat: Seat): void {
+    if (this.hostId !== by.id) throw new RuleError('only the host can remove a computer player');
+    if (this.match !== null) throw new RuleError('cannot change seats mid-match');
+    const sitting = this.playerAtSeat(seat);
+    if (sitting === null || !sitting.isBot) throw new RuleError('no computer player there');
+    this.players.delete(sitting.id);
+  }
+
+  /** Is a computer player sitting in this seat? */
+  private botAt(seat: Seat): Player | null {
+    const p = this.playerAtSeat(seat);
+    return p !== null && p.isBot ? p : null;
   }
 
   playerAtSeat(seat: Seat): Player | null {
@@ -232,13 +286,16 @@ export class Room {
     this.pushLog(
       `Match to ${this.rules.targetScore}. ${this.seatLabel(this.match.round?.turn ?? 0)} opens.`,
     );
+    this.voids = [[], [], [], []];
     this.armTimer();
+    this.scheduleBot();
   }
 
   move(player: Player, move: Move): void {
     const match = this.match;
     if (match === null) throw new RuleError('the match has not started');
     if (player.seat === null) throw new RuleError('you are watching, not playing');
+    this.notePass(player.seat, move);
     const outcome = applyMove(match, player.seat, move);
     this.match = outcome.match;
     if (outcome.result !== null) this.smashedThisRound = false;
@@ -246,6 +303,7 @@ export class Room {
     if (outcome.result !== null) this.pushLog(this.describeRoundResult(outcome.result));
     this.armTimer();
     this.maybeRecord();
+    this.scheduleBot();
   }
 
   nextRound(player: Player): void {
@@ -258,7 +316,9 @@ export class Room {
     this.pushLog(
       `Round ${this.match.roundNumber}. ${this.seatLabel(this.match.round?.turn ?? 0)} opens.`,
     );
+    this.voids = [[], [], [], []];
     this.armTimer();
+    this.scheduleBot();
   }
 
   rematch(player: Player): void {
@@ -272,7 +332,9 @@ export class Room {
     this.smashedThisRound = false;
     this.log = [];
     this.pushLog(`Rematch to ${this.rules.targetScore}.`);
+    this.voids = [[], [], [], []];
     this.armTimer();
+    this.scheduleBot();
   }
 
   /** May this seat slam the table right now? */
@@ -299,6 +361,105 @@ export class Room {
   }
 
   /**
+   * Record what a pass gives away, BEFORE it is applied: at that moment the
+   * open ends are still the ones the player failed to match, so everyone at
+   * the table learns they hold neither pip.
+   */
+  private notePass(seat: Seat, move: Move): void {
+    if (move.kind !== 'pass') return;
+    const ends = openEnds(this.match?.round?.board ?? []);
+    if (ends === null) return;
+    const known = this.voids[seat] as Pip[];
+    for (const pip of [ends.left, ends.right]) if (!known.includes(pip)) known.push(pip);
+  }
+
+  /**
+   * Hand a computer player only what someone sitting in that seat could see:
+   * its own tiles, the board, the public tile counts, and what the passes
+   * have revealed. The round itself never goes across this line, so a bot
+   * cannot read another hand even by mistake.
+   */
+  private contextFor(seat: Seat): BotContext | null {
+    const round = this.match?.round ?? null;
+    if (round === null) return null;
+    return {
+      seat,
+      hand: round.hands[seat] ?? [],
+      board: round.board,
+      ends: openEnds(round.board),
+      tilesLeft: SEATS.map((s) => (round.hands[s] ?? []).length),
+      voids: this.voids.map((v) => [...v]),
+      rules: this.rules,
+    };
+  }
+
+  /**
+   * Let the computer players take their turns. Runs on a timer so the table
+   * reads like a game rather than a transcript, and re-arms itself so a run
+   * of bot turns plays out one after another.
+   */
+  private scheduleBot(): void {
+    if (this.botTimer !== null) clearTimeout(this.botTimer);
+    this.botTimer = null;
+    const match = this.match;
+    if (match === null) return;
+
+    if (match.phase === 'playing' && match.round !== null) {
+      if (this.botAt(match.round.turn) === null) return;
+      this.botTimer = setTimeout(() => {
+        this.botTimer = null;
+        this.playBotTurn();
+      }, BOT_THINK_MS);
+      return;
+    }
+
+    // A table of nothing but computer players has nobody to click "deal", so
+    // it deals itself. With a human seated the round waits for them.
+    if (match.phase === 'roundOver' && SEATS.every((s) => this.botAt(s) !== null)) {
+      this.botTimer = setTimeout(() => {
+        this.botTimer = null;
+        const bot = this.playerAtSeat(0);
+        if (bot === null) return;
+        try {
+          this.nextRound(bot);
+        } catch {
+          return;
+        }
+        this.broadcastState();
+      }, BOT_THINK_MS * 2);
+    }
+  }
+
+  private playBotTurn(): void {
+    const match = this.match;
+    if (match === null || match.phase !== 'playing' || match.round === null) return;
+    const seat = match.round.turn;
+    const bot = this.botAt(seat);
+    if (bot === null) return;
+
+    const ctx = this.contextFor(seat);
+    if (ctx === null) return;
+    // legalMoves reads only this seat's own hand, so its result carries
+    // nothing the bot is not already entitled to.
+    const choice = chooseMove(legalMoves(match.round, seat), ctx, 1.5);
+    try {
+      this.notePass(seat, choice);
+      const outcome = applyMove(match, seat, choice);
+      this.match = outcome.match;
+      if (outcome.result !== null) this.smashedThisRound = false;
+      this.pushLog(this.describeMove(bot, choice));
+      if (outcome.result !== null) this.pushLog(this.describeRoundResult(outcome.result));
+      this.maybeRecord();
+    } catch {
+      // A rules error here is a bug, not bad input. Stop rather than spin.
+      return;
+    }
+    this.armTimer();
+    this.scheduleBot();
+    this.broadcastState();
+  }
+
+  /**
    * Keep the game moving when someone stalls or drops: play their first legal
    * move, or pass when they have none.
    */
@@ -309,6 +470,7 @@ export class Room {
     const moves = legalMoves(match.round, seat);
     const choice: Move = moves[0] ?? { kind: 'pass' };
     try {
+      this.notePass(seat, choice);
       const outcome = applyMove(match, seat, choice);
       this.match = outcome.match;
       this.pushLog(
@@ -325,6 +487,7 @@ export class Room {
       return;
     }
     this.armTimer();
+    this.scheduleBot();
     this.broadcastState();
   }
 
@@ -337,6 +500,12 @@ export class Room {
     const match = this.match;
     if (this.recorded || match === null || match.phase !== 'matchOver') return;
     if (this.supabase === null || !this.supabase.enabled) return;
+    // A table with a computer player at it is practice, not a real match.
+    // Recording it would quietly inflate everybody's record.
+    if (SEATS.some((s) => this.botAt(s) !== null)) {
+      this.recorded = true;
+      return;
+    }
     this.recorded = true;
 
     const remaining = match.lastResult?.remaining ?? [0, 0, 0, 0];
@@ -387,6 +556,8 @@ export class Room {
   dispose(): void {
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
+    if (this.botTimer !== null) clearTimeout(this.botTimer);
+    this.botTimer = null;
   }
 
   // -- logging & views -----------------------------------------------------
@@ -426,8 +597,10 @@ export class Room {
       if (p === null) return null;
       return {
         name: p.name,
-        connected: p.socket !== null,
+        // A bot is never "disconnected": it has no socket by design.
+        connected: p.isBot || p.socket !== null,
         tiles: round === null ? 0 : (round.hands[s] ?? []).length,
+        bot: p.isBot,
       };
     });
 
@@ -436,7 +609,7 @@ export class Room {
       seat !== null && round !== null && match?.phase === 'playing' && round.turn === seat;
 
     let spectators = 0;
-    for (const p of this.players.values()) if (p.seat === null) spectators++;
+    for (const p of this.players.values()) if (p.seat === null && !p.isBot) spectators++;
 
     return {
       v: PROTOCOL_VERSION,

@@ -33,6 +33,22 @@ Curaçao-style partnership dominoes:
   Afterwards the previous round's winner leads with any tile.
 - **A round ends** when someone plays their last tile, or when all four pass
   in turn.
+
+### Computer players
+
+A table needs four. If you have not got four phones to hand, the host can fill
+the empty seats from the lobby — **Add a computer player**, or **Fill the
+table**. They are server-side, so they play whether or not anyone is watching,
+and a seat can be handed back to a person before the match starts.
+
+A computer player sees exactly what somebody sitting in that seat would see:
+its own tiles, the board, how many tiles everyone else is holding, and what the
+passes have given away. It is handed a `BotContext` rather than the round, so
+it cannot read another hand even by mistake — see `server/src/bot.ts` and the
+tests in `server/test/bot.test.ts`, which assert the boundary directly.
+
+A match with a computer player at the table is **not recorded to the stats**:
+it is practice, and counting it would inflate everyone's record.
 - **Winning a round is worth one point — or two for a capicú**, going out on
   a tile that matched both open ends. A capicú also earns your team a
   **smash**: slam the table and send the tiles skidding out of line until the

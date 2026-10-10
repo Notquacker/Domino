@@ -17,6 +17,8 @@ export interface SeatInfo {
   readonly connected: boolean;
   /** Tiles still in hand — public information in dominoes. */
   readonly tiles: number;
+  /** A computer player rather than a person. */
+  readonly bot: boolean;
 }
 
 export type RoomPhase = 'lobby' | Phase;
@@ -73,6 +75,9 @@ export type ClientMessage =
   | { readonly t: 'join'; readonly code: string; readonly name: string }
   | { readonly t: 'resume'; readonly code: string; readonly token: string }
   | { readonly t: 'sit'; readonly seat: Seat }
+  /** Host only, lobby only: seat a computer player in the first free seat. */
+  | { readonly t: 'addBot' }
+  | { readonly t: 'removeBot'; readonly seat: Seat }
   | { readonly t: 'stand' }
   | { readonly t: 'start' }
   | { readonly t: 'move'; readonly move: Move }

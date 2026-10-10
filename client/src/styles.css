@@ -123,6 +123,8 @@ input::placeholder { color: var(--muted); }
 .hint { color: var(--muted); font-size: 13px; text-align: center; margin: 0; }
 
 .seatlist { display: grid; gap: 8px; }
+.seatfill { display: flex; gap: 8px; margin-top: 10px; }
+.seatfill button { flex: 1; }
 .seat {
   display: flex;
   align-items: center;
