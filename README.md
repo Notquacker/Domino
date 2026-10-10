@@ -181,6 +181,14 @@ it the way a chain spreads across a real table, and a straight run turns a
 corner after **seven tiles**. Because both arms share the opener's row, that
 row holds seven in total rather than seven in each direction.
 
+**The chain never turns straight after a double.** A double lies across the
+chain rather than along it, so a corner there would fold back through a tile
+that is already crosswise. When a turn falls on one the run carries straight
+on and turns at the next tile, which is why a run occasionally reaches eight.
+
+Whichever way the chain runs, the halves that touch always show the same
+number of pips — the tile is drawn from whichever side meets its neighbour.
+
 Two shapes, switched with the button in the top bar. It is a local preference
 rather than a table rule, so everyone can pick their own.
 

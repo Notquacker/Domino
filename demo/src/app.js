@@ -367,32 +367,49 @@
     // Both arms share the opener's row, so each gets half of it.
     var halfRun = Math.max(1, Math.floor((MAX_RUN - 1) / 2));
 
-    function put(tile, index, dir, cx, cy) {
+    /**
+     * `backward` decides which half of the tile faces the one already down.
+     * Walking forward a tile meets its neighbour by its LEFT half; walking
+     * back from the opener it meets by its RIGHT half. Get this wrong and
+     * the board draws with mismatched pips touching.
+     */
+    function put(tile, index, dir, cx, cy, backward) {
       var isDouble = tile.left === tile.right;
       var along = isDouble ? shortS : longS, across = isDouble ? longS : shortS;
       var vertical = dir === 1 || dir === 3;
       var x = dir === 2 ? cx - along : (dir === 0 ? cx : cx - across / 2);
       var y = dir === 3 ? cy - along : (dir === 1 ? cy : cy - across / 2);
+      var nearIsSecondHalf = dir === 2 || dir === 3;
       spots.push({ index: index, tile: tile, x: x, y: y,
         w: vertical ? across : along, h: vertical ? along : across,
-        vertical: vertical, flipped: dir === 2 || dir === 3 });
+        vertical: vertical,
+        flipped: backward ? !nearIsSecondHalf : nearIsSecondHalf });
       return {
         x: cx + (dir === 0 ? along : (dir === 2 ? -along : 0)),
         y: cy + (dir === 1 ? along : (dir === 3 ? -along : 0))
       };
     }
 
+    // A double lies across the chain rather than along it, so the chain
+    // cannot turn immediately after one — the corner would fold back through
+    // a tile that is already crosswise. The run carries straight on instead.
+    function isDouble(t) { return !!t && t.left === t.right; }
+
     var cursor = put(board[openerIndex], openerIndex, 0, 0, 0);
     var dir = 0, run = 1, limit = halfRun + 1;
     for (var i = openerIndex + 1; i < board.length; i++) {
-      if (run >= limit) { dir = (dir + 1) % 4; run = 0; limit = runLimit(dir); }
+      if (run >= limit && !isDouble(board[i - 1])) {
+        dir = (dir + 1) % 4; run = 0; limit = runLimit(dir);
+      }
       cursor = put(board[i], i, dir, cursor.x, cursor.y);
       run++;
     }
     var back = 2, backRun = 1, backLimit = MAX_RUN - halfRun, bc = { x: 0, y: 0 };
     for (var j = openerIndex - 1; j >= 0; j--) {
-      if (backRun >= backLimit) { back = (back + 1) % 4; backRun = 0; backLimit = runLimit(back); }
-      bc = put(board[j], j, back, bc.x, bc.y);
+      if (backRun >= backLimit && !isDouble(board[j + 1])) {
+        back = (back + 1) % 4; backRun = 0; backLimit = runLimit(back);
+      }
+      bc = put(board[j], j, back, bc.x, bc.y, true);
       backRun++;
     }
 

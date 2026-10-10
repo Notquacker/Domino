@@ -870,13 +870,22 @@ function layoutChain(
     return isDouble ? { along: short, across: long } : { along: long, across: short };
   };
 
-  /** Place one tile so its near edge meets `cursor`, and return the far edge. */
+  /**
+   * Place one tile so its near edge meets `cursor`, and return the far edge.
+   *
+   * `backward` says which way along the chain we are walking, and it decides
+   * which half of the tile has to face the one already down. Walking forward,
+   * a tile meets its neighbour by its LEFT half (board[i-1].right ===
+   * board[i].left); walking back from the opener it meets by its RIGHT half.
+   * Get this wrong and the board draws with mismatched pips touching.
+   */
   const put = (
     tile: Placed,
     index: number,
     dir: Dir,
     cx: number,
     cy: number,
+    backward = false,
   ): { x: number; y: number } => {
     const { along, across } = size(tile, dir);
     const vertical = dir === 1 || dir === 3;
@@ -884,7 +893,20 @@ function layoutChain(
     const h = vertical ? along : across;
     const x = dir === 2 ? cx - along : dir === 0 ? cx : cx - across / 2;
     const y = dir === 3 ? cy - along : dir === 1 ? cy : cy - across / 2;
-    spots.push({ index, tile, x, y, w, h, vertical, flipped: dir === 2 || dir === 3 });
+    // A tile renders its first half at the top or left. Travelling left or up
+    // puts the near end on the right or bottom, so the halves swap — and the
+    // backward arm meets its neighbour by the other half, inverting it again.
+    const nearIsSecondHalf = dir === 2 || dir === 3;
+    spots.push({
+      index,
+      tile,
+      x,
+      y,
+      w,
+      h,
+      vertical,
+      flipped: backward ? !nearIsSecondHalf : nearIsSecondHalf,
+    });
     return {
       x: cx + (dir === 0 ? along : dir === 2 ? -along : 0),
       y: cy + (dir === 1 ? along : dir === 3 ? -along : 0),
@@ -894,12 +916,21 @@ function layoutChain(
   // The opener sits at the origin, lying along the chain.
   let cursor = put(board[openerIndex] as Placed, openerIndex, 0, 0, 0);
 
+  /**
+   * A double lies across the chain rather than along it, so the chain cannot
+   * turn immediately after one — the corner would fold back through a tile
+   * that is already crosswise. When a turn falls there the run carries
+   * straight on and turns at the next tile instead.
+   */
+  const isDouble = (tile: Placed | undefined): boolean =>
+    tile !== undefined && tile.left === tile.right;
+
   // Forward arm: the right-hand end of the chain.
   let dir: Dir = 0;
   let run = 1;
   let limit = halfRun + 1;
   for (let i = openerIndex + 1; i < board.length; i++) {
-    if (run >= limit) {
+    if (run >= limit && !isDouble(board[i - 1])) {
       dir = ((dir + 1) % 4) as Dir;
       run = 0;
       limit = runLimit(dir);
@@ -916,12 +947,12 @@ function layoutChain(
   let backLimit = MAX_RUN - halfRun;
   let backCursor = { x: 0, y: 0 };
   for (let i = openerIndex - 1; i >= 0; i--) {
-    if (backRun >= backLimit) {
+    if (backRun >= backLimit && !isDouble(board[i + 1])) {
       back = ((back + 1) % 4) as Dir;
       backRun = 0;
       backLimit = runLimit(back);
     }
-    backCursor = put(board[i] as Placed, i, back, backCursor.x, backCursor.y);
+    backCursor = put(board[i] as Placed, i, back, backCursor.x, backCursor.y, true);
     backRun++;
   }
 
