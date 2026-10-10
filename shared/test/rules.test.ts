@@ -770,6 +770,55 @@ describe('punishing a false pass', () => {
   });
 });
 
+describe('not dealing anyone a hand of doubles', () => {
+  const doublesIn = (hand: readonly string[]): number =>
+    hand.filter((id) => {
+      const [a, b] = id.split('-');
+      return a === b;
+    }).length;
+
+  it('never deals five doubles to anyone', () => {
+    for (let seed = 1; seed <= 3000; seed++) {
+      const r = dealRound(rules(), 1, null, seededRng(seed));
+      for (const seat of [0, 1, 2, 3] as Seat[]) {
+        const count = doublesIn(r.hands[seat]!);
+        assert.ok(count <= 4, `seed ${seed}: seat ${seat} was dealt ${count} doubles`);
+      }
+    }
+  });
+
+  it('still deals the whole set, once each, after a re-deal', () => {
+    // The re-deal must not leave a tile behind or hand one out twice.
+    for (let seed = 1; seed <= 300; seed++) {
+      const r = dealRound(rules(), 1, null, seededRng(seed));
+      const all = r.hands.flat();
+      assert.equal(all.length, 28, `seed ${seed}: wrong number of tiles`);
+      assert.equal(new Set(all).size, 28, `seed ${seed}: a tile was dealt twice`);
+      for (const seat of [0, 1, 2, 3] as Seat[]) assert.equal(r.hands[seat]!.length, 7);
+    }
+  });
+
+  it('deals whatever falls when the rule is off', () => {
+    // Proof the rule above is doing something: with it off, five doubles
+    // turn up on their own.
+    let worst = 0;
+    for (let seed = 1; seed <= 3000; seed++) {
+      const r = dealRound(rules({ maxDoublesInHand: null }), 1, null, seededRng(seed));
+      for (const seat of [0, 1, 2, 3] as Seat[]) {
+        worst = Math.max(worst, doublesIn(r.hands[seat]!));
+      }
+    }
+    assert.ok(worst >= 5, `without the rule a hand of 5+ doubles should turn up, worst was ${worst}`);
+  });
+
+  it('gives up rather than hanging on a limit nothing can satisfy', () => {
+    // Someone always holds at least two doubles -- seven of them across four
+    // hands -- so a limit of one can never be met. It must still return.
+    const r = dealRound(rules({ maxDoublesInHand: 1 }), 1, null, seededRng(5));
+    assert.equal(r.hands.flat().length, 28, 'a full deal came back anyway');
+  });
+});
+
 describe('calling someone out', () => {
   /** A round where seat 1 has passed on a 0 they could have played. */
   function afterABluff() {

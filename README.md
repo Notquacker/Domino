@@ -71,6 +71,12 @@ it is practice, and counting it would inflate everyone's record.
   **smash**: slam the table and send the tiles skidding out of line until the
   next deal. The server decides who has earned one, so the button cannot be
   conjured up by a tampered client.
+- **Nobody is dealt five doubles.** Five of the seven doubles in one hand is
+  barely playable — each of them only ever answers one number — so the round
+  is shuffled and dealt again. Over 20,000 deals it happened in **1.56%** of
+  them; with the rule on, none. The spread of two, three and four doubles
+  barely moves (22.2% → 22.6%, 60.1% → 61.0%), so it trims the tail without
+  tilting the game. `maxDoublesInHand: null` turns it off.
 - **A practice game can be cancelled.** With a computer player at the table
   the host gets a *Cancel this game* button, which bins the match and returns
   everyone to the lobby with the seats still filled. A table of real people

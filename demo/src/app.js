@@ -18,6 +18,7 @@
       doubleSixOpensEveryRound: true,
       openWithAnyDouble: true,
       strictPassing: false,
+      maxDoublesInHand: 4,
       blockedByLowestPlayer: true,
       falsePassPenalty: 2,
       falsePassForfeits: true,
@@ -309,6 +310,7 @@
     toggle('falsepass', 'Punish a false pass', 'falsePassPenalty', 2);
     toggle('forfeit', 'A false pass loses the whole round', 'falsePassForfeits');
     toggle('blocklow', 'A locked round goes to the single lightest hand', 'blockedByLowestPlayer');
+    toggle('nofivedoubles', 'Deal again if anyone gets 5 doubles', 'maxDoublesInHand', 4);
     toggle('capicu', 'Capicú counts double', 'capicuPoints', 2);
     toggle('double6', 'The 6-6 decides who opens', 'mustOpenDoubleSix');
     toggle('six-every', 'The 6-6 opens every round, not just the first', 'doubleSixOpensEveryRound');

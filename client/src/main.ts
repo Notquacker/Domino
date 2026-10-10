@@ -1007,6 +1007,19 @@ function renderLanding(): HTMLElement {
     el('p', 'note', 'Whoever is dealt the 6-6 leads, every round. Turn this off and the 6-6 only opens the match, after which the previous round\u2019s winner leads.'),
   );
 
+  const noFive = el('label');
+  const noFiveBox = el('input') as HTMLInputElement;
+  noFiveBox.type = 'checkbox';
+  noFiveBox.id = 'nofivedoubles';
+  noFiveBox.checked = true;
+  noFiveBox.style.width = 'auto';
+  noFive.appendChild(noFiveBox);
+  noFive.appendChild(el('span', 'grow', 'Deal again if anyone gets 5 doubles'));
+  rulesBox.appendChild(noFive);
+  rulesBox.appendChild(
+    el('p', 'note', 'Five of the seven doubles in one hand is barely playable — each only ever answers one number. It happens in about one deal in sixty-five; this shuffles and deals again.'),
+  );
+
   const blockLow = el('label');
   const blockLowBox = el('input') as HTMLInputElement;
   blockLowBox.type = 'checkbox';
@@ -1074,6 +1087,7 @@ function renderLanding(): HTMLElement {
         capicuPoints: capicuBox.checked ? (pips ? 25 : 2) : 0,
         openWithAnyDouble: anyDoubleBox.checked,
         blockedByLowestPlayer: blockLowBox.checked,
+        maxDoublesInHand: noFiveBox.checked ? 4 : null,
         doubleSixOpensEveryRound: sixEveryBox.checked,
         turnSeconds: chosenClock(),
         countAllRemaining: countAllBox.checked,

@@ -97,6 +97,13 @@ export interface HouseRules {
    */
   readonly blockedByLowestPlayer: boolean;
   /**
+   * The most doubles anyone may be dealt. A hand with five of the seven
+   * doubles in it can barely be played — most of it only ever fits one
+   * number — so the whole round is shuffled and dealt again. Null turns the
+   * re-deal off and lets the tiles fall where they will.
+   */
+  readonly maxDoublesInHand: number | null;
+  /**
    * Seconds a player has to move before the server plays for them, or null
    * for no clock at all. Around a kitchen table nobody is on a clock, so a
    * family game may well want null; a game between phones usually wants one,
@@ -167,6 +174,7 @@ export const DEFAULT_RULES: HouseRules = {
   winBy: 1,
   drawAt: 5,
   blockedByLowestPlayer: true,
+  maxDoublesInHand: 4,
   turnSeconds: 60,
   mustOpenDoubleSix: true,
   doubleSixOpensEveryRound: true,
@@ -397,18 +405,43 @@ export function isLegal(
  * the 6-6 itself or allowed any double they hold. Where the 6-6 does not
  * decide, the previous round's winner leads with any tile at all.
  */
+/**
+ * Deal four hands, shuffling again if anyone lands too many doubles.
+ *
+ * Five of the seven doubles in one hand is a hand you cannot really play:
+ * each of those tiles answers only one number, so you sit there passing
+ * while everyone else empties out. Rare — about one deal in sixty-five — but
+ * miserable when it happens, so the round is simply dealt again.
+ *
+ * The retries are capped. With a limit set absurdly low no shuffle could ever
+ * satisfy it, and a deal that never returns would be far worse than a bad
+ * hand; after the cap the last deal stands.
+ */
+function dealHands(rules: HouseRules, rng: Rng): TileId[][] {
+  const limit = rules.maxDoublesInHand;
+  const MAX_TRIES = 100;
+
+  let hands: TileId[][] = [[], [], [], []];
+  for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+    const deck = shuffle(fullSet(), rng);
+    hands = [[], [], [], []];
+    for (let i = 0; i < deck.length; i++) {
+      (hands[i % 4] as TileId[]).push(deck[i] as TileId);
+    }
+    if (limit === null) break;
+    const worst = Math.max(...hands.map((h) => h.filter((id) => isDouble(id)).length));
+    if (worst <= limit) break;
+  }
+  return hands;
+}
+
 export function dealRound(
   rules: HouseRules,
   roundNumber: number,
   starter: Seat | null,
   rng: Rng,
 ): RoundState {
-  const deck = shuffle(fullSet(), rng);
-  const hands: TileId[][] = [[], [], [], []];
-  for (let i = 0; i < deck.length; i++) {
-    const seat = (i % 4) as Seat;
-    (hands[seat] as TileId[]).push(deck[i] as TileId);
-  }
+  const hands = dealHands(rules, rng);
 
   const openingRound =
     rules.mustOpenDoubleSix && (roundNumber === 1 || rules.doubleSixOpensEveryRound);

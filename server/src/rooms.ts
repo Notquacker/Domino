@@ -138,6 +138,13 @@ function mergeRules(partial: Partial<HouseRules> | undefined): HouseRules {
     targetScore: target,
     winBy: clampInt(partial.winBy, 1, 5, base.winBy),
     drawAt,
+    // null means "deal whatever falls", so it is a choice, not an absence.
+    maxDoublesInHand:
+      partial.maxDoublesInHand === undefined
+        ? base.maxDoublesInHand
+        : partial.maxDoublesInHand === null
+          ? null
+          : clampInt(partial.maxDoublesInHand, 1, 7, base.maxDoublesInHand ?? 4),
     blockedByLowestPlayer: bool(partial.blockedByLowestPlayer, base.blockedByLowestPlayer),
     // null is a real choice here (no clock at all), so it has to be told
     // apart from the field simply being absent.
