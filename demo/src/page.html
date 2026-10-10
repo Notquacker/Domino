@@ -241,8 +241,6 @@ details.rules[open] summary::before { content: "▾ "; }
 .pitch { position: relative; margin: 0 auto; }
 .pitch .tile { position: absolute; }
 .endlabel { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
-.endsbar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 16px 8px; }
-.endsbar .endslot { width: 30px; height: 44px; font-size: 16px; }
 .table { position: relative; }
 .hand .tile.inhand { touch-action: none; }
 .dropzone {
@@ -252,6 +250,7 @@ details.rules[open] summary::before { content: "▾ "; }
   border: 2px dashed #ffffff33; background: #ffffff08;
   transition: background .12s ease, border-color .12s ease;
 }
+.dropzone.lead { left: 0; width: 100%; border-radius: 12px; }
 .dropzone.left { left: 0; border-right: none; border-radius: 0 12px 12px 0; }
 .dropzone.right { right: 0; border-left: none; border-radius: 12px 0 0 12px; }
 .dropzone.over { border-color: var(--gold); background: #e3b45b30; }
@@ -259,6 +258,18 @@ details.rules[open] summary::before { content: "▾ "; }
 .dropzone.over .zonelabel { color: var(--gold); }
 .zonepip { font-size: 30px; font-weight: 800; color: var(--text); opacity: .55; font-variant-numeric: tabular-nums; }
 .dropzone.over .zonepip { color: var(--gold); opacity: 1; }
+.dropzone.tappable { pointer-events: auto; cursor: pointer; font: inherit; padding: 0; box-shadow: none; }
+.dropzone.tappable:hover, .dropzone.tappable:focus-visible { border-color: var(--gold); background: #e3b45b26; }
+.dropzone.tappable:hover .zonepip, .dropzone.tappable:focus-visible .zonepip { color: var(--gold); opacity: 1; }
+.dropzone.tappable {
+  pointer-events: auto; cursor: pointer; font: inherit; padding: 0; box-shadow: none;
+}
+.dropzone.tappable:hover, .dropzone.tappable:focus-visible {
+  border-color: var(--gold); background: #e3b45b26;
+}
+.dropzone.tappable:hover .zonepip, .dropzone.tappable:focus-visible .zonepip {
+  color: var(--gold); opacity: 1;
+}
 .tile.ghost {
   position: fixed; z-index: 50; pointer-events: none;
   transform: translate(-50%, -55%) scale(1.12) rotate(-3deg);

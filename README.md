@@ -15,11 +15,12 @@ Curaçao-style partnership dominoes:
 - **Nothing tells you what you can play.** The server deliberately does not
   send the list of legal moves, and the board shows no highlighting: choose a
   tile and an end, and find out. A tile that does not fit is refused.
-- **Drag a tile to the end you want.** While a tile is in the air the table
-  splits into two targets showing each open end. Tapping a tile and then an
-  end still works, and is what the keyboard uses. The open ends are also shown
-  beside your hand, where they are close to the tiles rather than out on the
-  table.
+- **Drag a tile to the end you want.** Pick a tile up — by dragging or by
+  tapping it — and the table splits into two targets, each showing the pip you
+  would be playing against. Drop on one, or tap it. That is the only place the
+  open ends appear: there is no standing readout, so the board is clear until
+  you are actually choosing. On the opening lead, where there is nothing to
+  choose between, the whole table is one target.
 - **Passing is a choice.** You may pass at any time, even holding a playable
   tile. But every pass is recorded, and when hands are revealed at the end of
   the round, **a pass made on a tile you could have played gives the other

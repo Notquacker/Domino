@@ -225,24 +225,6 @@ input::placeholder { color: var(--muted); }
 .chainrow.reverse { flex-direction: row-reverse; }
 .chain .empty-table { color: var(--muted); font-size: 14px; text-align: center; }
 
-.endslot {
-  flex: none;
-  width: 34px; height: 56px;
-  border: 2px dashed #ffffff33;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  display: grid; place-items: center;
-  font-size: 18px; font-weight: 700;
-  padding: 0;
-}
-.endslot.live {
-  border-color: var(--gold);
-  color: var(--gold);
-  background: #e0b25222;
-  animation: pulse 1.6s ease-in-out infinite;
-}
-@keyframes pulse { 50% { background: #e0b25240; } }
 
 .status {
   text-align: center; padding: 6px 14px; font-size: 14px; min-height: 22px;
@@ -288,11 +270,6 @@ input::placeholder { color: var(--muted); }
   height: calc(var(--tile-h) * var(--tile-scale, 1));
 }
 .chain .pip { max-width: calc(7px * var(--tile-scale, 1)); }
-.chain .endslot {
-  width: calc(34px * var(--tile-scale, 1));
-  height: calc(56px * var(--tile-scale, 1));
-  font-size: calc(18px * var(--tile-scale, 1));
-}
 .tile.h .half + .half { border-left: 1px solid #0000002e; }
 .tile.v .half + .half { border-top: 1px solid #0000002e; }
 
@@ -361,7 +338,6 @@ input::placeholder { color: var(--muted); }
 @media (min-width: 620px) {
   :root { --tile-w: 46px; --tile-h: 90px; }
   .pip { max-width: 9px; }
-  .endslot { width: 40px; height: 64px; }
 }
 
 /* ---------------- account ---------------- */
@@ -404,14 +380,6 @@ input::placeholder { color: var(--muted); }
 }
 .tile.board.fresh { animation: drop 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
 
-/* An end is only tappable once a tile is chosen — and never says if it fits. */
-.endslot.armed {
-  border-color: var(--gold);
-  color: var(--gold);
-  background: #e0b25218;
-  cursor: pointer;
-}
-.endslot:disabled { cursor: default; }
 
 .iconbtn {
   background: transparent;
@@ -457,13 +425,6 @@ input::placeholder { color: var(--muted); }
 /* Square layout: tiles walk the perimeter, so they are placed absolutely. */
 .pitch { position: relative; margin: 0 auto; }
 .pitch .tile { position: absolute; }
-.endrow {
-  display: flex; align-items: center; justify-content: center;
-  gap: 10px; margin-top: 10px;
-}
-.endlabel {
-  font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted);
-}
 
 /* A slammed table: tiles knocked askew until the next deal. */
 .chain.messy .tile { transition: transform 0.35s cubic-bezier(0.3, 1.4, 0.5, 1); }
@@ -505,17 +466,6 @@ body.shaking { animation: shake 0.62s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
 
 /* ---------------- drag to an end ---------------- */
 
-/* The open ends now live beside the hand, not out on the table. */
-.endsbar {
-  display: flex; align-items: center; justify-content: center;
-  gap: 10px; padding: 0 16px 8px;
-}
-.endsbar .endlabel {
-  font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase;
-  color: var(--muted);
-}
-.endsbar .endslot { width: 30px; height: 44px; font-size: 16px; }
-
 /* While a tile is in the air the table becomes two big targets. */
 .dropzone {
   position: absolute; top: 0; bottom: 0; width: 50%;
@@ -550,3 +500,38 @@ body.shaking { animation: shake 0.62s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
 
 .table { position: relative; }
 .hand .tile.inhand { touch-action: none; }
+
+/* A drop zone you can also tap, for the pick-then-place flow. */
+.dropzone.tappable {
+  pointer-events: auto;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  box-shadow: none;
+}
+.dropzone.tappable:hover, .dropzone.tappable:focus-visible {
+  border-color: var(--gold);
+  background: #e0b25226;
+}
+.dropzone.tappable:hover .zonepip, .dropzone.tappable:focus-visible .zonepip {
+  color: var(--gold); opacity: 1;
+}
+
+/* A drop zone you can also tap, for the pick-then-place flow. */
+.dropzone.tappable {
+  pointer-events: auto;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  box-shadow: none;
+}
+.dropzone.tappable:hover, .dropzone.tappable:focus-visible {
+  border-color: var(--gold);
+  background: #e0b25226;
+}
+.dropzone.tappable:hover .zonepip, .dropzone.tappable:focus-visible .zonepip {
+  color: var(--gold); opacity: 1;
+}
+
+/* The opening lead: one target covering the table, since there is no choice. */
+.dropzone.lead { left: 0; width: 100%; border-radius: 12px; }

@@ -861,22 +861,6 @@ function renderOpponents(v: PlayerView): HTMLElement {
   return wrap;
 }
 
-/**
- * An open end you can aim at. It shows the pip value — public information —
- * but never whether your selected tile would actually fit.
- */
-function endSlot(v: PlayerView, end: End): HTMLElement {
-  const pip = end === 'left' ? v.ends?.left : v.ends?.right;
-  const armed = selected !== null;
-  const slot = el('button', `endslot${armed ? ' armed' : ''}`, String(pip ?? '')) as HTMLButtonElement;
-  slot.setAttribute('aria-label', `Play your tile on the ${end} end, showing ${pip}`);
-  slot.disabled = !armed;
-  slot.addEventListener('click', () => {
-    if (selected !== null) play(selected, end);
-  });
-  return slot;
-}
-
 /** Base tile dimensions in CSS pixels, matching the stylesheet. */
 const TILE_SHORT = 40;
 const TILE_LONG = 78;
@@ -1074,10 +1058,30 @@ function renderTable(v: PlayerView): HTMLElement {
       el(
         'div',
         'empty-table',
-        playing ? 'Your lead — tap a tile to lay it down.' : 'Waiting for the opening tile…',
+        playing ? 'Your lead — lay a tile down.' : 'Waiting for the opening tile…',
       ),
     );
     box.appendChild(chain);
+
+    // The lead has no ends to choose between, so the whole table is one
+    // target. Without this a dragged tile has nowhere to land and the opener
+    // is left wondering why nothing happens.
+    const leading = dragTile ?? selected;
+    if (leading !== null && playing) {
+      const tappable = dragTile === null;
+      const zone = el(
+        tappable ? 'button' : 'div',
+        `dropzone lead${dragOver !== null ? ' over' : ''}${tappable ? ' tappable' : ''}`,
+      );
+      zone.dataset['end'] = 'right';
+      zone.appendChild(el('span', 'zonelabel', 'LAY IT DOWN'));
+      if (tappable) {
+        zone.setAttribute('aria-label', 'Lay the opening tile down');
+        zone.addEventListener('click', () => play(leading, 'right'));
+      }
+      box.appendChild(zone);
+    }
+
     lastBoard = [];
     return box;
   }
@@ -1115,14 +1119,26 @@ function renderTable(v: PlayerView): HTMLElement {
 
   box.appendChild(chain);
 
-  // While a tile is in the air, the whole table becomes two targets.
-  if (dragTile !== null && v.ends !== null) {
+  // Once a tile is in hand — dragged or tapped — the table becomes two
+  // targets, each showing the pip you would be playing against. That is the
+  // only place the open ends appear; there is no separate readout.
+  const aiming = dragTile ?? selected;
+
+  if (aiming !== null && v.ends !== null) {
     for (const end of ['left', 'right'] as End[]) {
       const pip = end === 'left' ? v.ends.left : v.ends.right;
-      const zone = el('div', `dropzone ${end}${dragOver === end ? ' over' : ''}`);
+      const tappable = dragTile === null;
+      const zone = el(
+        tappable ? 'button' : 'div',
+        `dropzone ${end}${dragOver === end ? ' over' : ''}${tappable ? ' tappable' : ''}`,
+      );
       zone.dataset['end'] = end;
       zone.appendChild(el('span', 'zonelabel', end === 'left' ? 'LEFT' : 'RIGHT'));
       zone.appendChild(el('span', 'zonepip', String(pip)));
+      if (tappable) {
+        zone.setAttribute('aria-label', `Play on the ${end} end, against a ${pip}`);
+        zone.addEventListener('click', () => play(aiming, end));
+      }
       box.appendChild(zone);
     }
   }
@@ -1155,18 +1171,6 @@ function renderStatus(v: PlayerView): HTMLElement {
 function renderHand(v: PlayerView): HTMLElement {
   const zone = el('div', 'handzone');
 
-  // The open ends sit down here by the hand rather than out on the table,
-  // where they pushed the board around and sat far from the tiles.
-  if (v.ends !== null) {
-    // Left end on the left, right end on the right, so the position means
-    // the same thing here as it does on the board.
-    const bar = el('div', 'endsbar');
-    bar.appendChild(endSlot(v, 'left'));
-    bar.appendChild(el('span', 'endlabel', 'open ends'));
-    bar.appendChild(endSlot(v, 'right'));
-    zone.appendChild(bar);
-  }
-
   const hand = el('div', 'hand');
 
   if (v.hand.length === 0) {
@@ -1180,12 +1184,6 @@ function renderHand(v: PlayerView): HTMLElement {
     if (rejected === id) node.classList.add('refused');
     if (myTurn()) {
       const activate = (): void => {
-        // Opening lead: there is only one place a tile can go, so one tap
-        // puts it down. Nothing is revealed — the server still decides.
-        if (v.board.length === 0) {
-          play(id, 'right');
-          return;
-        }
         selected = selected === id ? null : id;
         render();
       };
@@ -1211,7 +1209,7 @@ function renderHand(v: PlayerView): HTMLElement {
   const bar = el('div', 'handbar');
   if (myTurn()) {
     if (selected !== null) {
-      bar.appendChild(el('span', 'hint', 'Tap the end of the chain you want.'));
+      bar.appendChild(el('span', 'hint', 'Now tap the end you want.'));
       const cancel = el('button', 'ghost small', 'Cancel') as HTMLButtonElement;
       cancel.addEventListener('click', () => {
         selected = null;
@@ -1224,7 +1222,7 @@ function renderHand(v: PlayerView): HTMLElement {
           'span',
           'hint',
           v.board.length === 0
-            ? 'Tap a tile to lead.'
+            ? 'Pick a tile, then lay it down.'
             : 'Drag a tile to an end — or tap it, then tap an end.',
         ),
       );

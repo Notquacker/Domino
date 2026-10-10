@@ -386,17 +386,6 @@
     return wrap;
   }
 
-  function endSlot(end) {
-    var ends = D.openEnds(round().board);
-    var armed = !!S.selected;
-    var pip = end === 'left' ? ends.left : ends.right;
-    var b = el('button', 'endslot' + (armed ? ' armed' : ''), String(pip));
-    b.setAttribute('aria-label', 'Play your tile on the ' + end + ' end, showing ' + pip);
-    b.disabled = !armed;
-    b.addEventListener('click', function () { if (S.selected) play(S.selected, end); });
-    return b;
-  }
-
   var TILE_SHORT = 39, TILE_LONG = 76, TILE_GAP = 3;
 
   /** Shrink tiles as the chain grows so the whole board keeps fitting. */
@@ -495,8 +484,25 @@
     var isPlaying = playing();
 
     if (!board.length) {
-      chain.appendChild(el('div', 'blank', isPlaying ? 'Your lead — tap a tile to lay it down.' : 'No tiles down yet.'));
+      chain.appendChild(el('div', 'blank', isPlaying ? 'Your lead — lay a tile down.' : 'No tiles down yet.'));
       box.appendChild(chain);
+
+      // The lead has no ends to choose between, so the whole table is one
+      // target; otherwise a dragged tile has nowhere to land.
+      var leading = S.dragTile || S.selected;
+      if (leading && isPlaying) {
+        var leadTap = !S.dragTile;
+        var lead = el(leadTap ? 'button' : 'div',
+          'dropzone lead' + (S.dragOver ? ' over' : '') + (leadTap ? ' tappable' : ''));
+        lead.setAttribute('data-end', 'right');
+        lead.appendChild(el('span', 'zonelabel', 'LAY IT DOWN'));
+        if (leadTap) {
+          lead.setAttribute('aria-label', 'Lay the opening tile down');
+          lead.addEventListener('click', function () { play(leading, 'right'); });
+        }
+        box.appendChild(lead);
+      }
+
       lastBoard = [];
       return box;
     }
@@ -534,14 +540,24 @@
 
     box.appendChild(chain);
 
-    // While a tile is in the air, the whole table becomes two targets.
-    if (S.dragTile && isPlaying) {
+    // Once a tile is in hand — dragged or tapped — the table becomes two
+    // targets, each showing the pip you would play against. That is the only
+    // place the open ends appear; there is no separate readout.
+    var aiming = S.dragTile || S.selected;
+    if (aiming && isPlaying) {
       var e2 = D.openEnds(board);
+      var tappable = !S.dragTile;
       ['left', 'right'].forEach(function (side) {
-        var zone = el('div', 'dropzone ' + side + (S.dragOver === side ? ' over' : ''));
+        var zone = el(tappable ? 'button' : 'div',
+          'dropzone ' + side + (S.dragOver === side ? ' over' : '') + (tappable ? ' tappable' : ''));
         zone.setAttribute('data-end', side);
         zone.appendChild(el('span', 'zonelabel', side === 'left' ? 'LEFT' : 'RIGHT'));
-        zone.appendChild(el('span', 'zonepip', String(side === 'left' ? e2.left : e2.right)));
+        var pip = side === 'left' ? e2.left : e2.right;
+        zone.appendChild(el('span', 'zonepip', String(pip)));
+        if (tappable) {
+          zone.setAttribute('aria-label', 'Play on the ' + side + ' end, against a ' + pip);
+          zone.addEventListener('click', function () { play(aiming, side); });
+        }
         box.appendChild(zone);
       });
     }
@@ -561,17 +577,6 @@
   function renderHand() {
     var zone = el('div', 'handzone');
 
-    // The open ends sit down here by the hand, not out on the table.
-    var bd = round().board;
-    if (bd.length) {
-      var ends = D.openEnds(bd);
-      var bar = el('div', 'endsbar');
-      bar.appendChild(endSlot('left'));
-      bar.appendChild(el('span', 'endlabel', 'open ends'));
-      bar.appendChild(endSlot('right'));
-      zone.appendChild(bar);
-    }
-
     var hand = el('div', 'hand');
     var tiles = round().hands[turn()];
 
@@ -581,8 +586,6 @@
       var node = handTile(id, S.selected === id ? 'sel' : 'playable');
       if (S.refused === id) node.className += ' refused';
       var act = function () {
-        // Opening lead: only one place it can go, so one tap lays it down.
-        if (round().board.length === 0) { play(id, 'right'); return; }
         S.selected = S.selected === id ? null : id;
         render();
       };
@@ -600,8 +603,8 @@
     var bar = el('div', 'handbar');
     if (playing()) {
       bar.appendChild(el('span', 'hint',
-        round().board.length === 0 ? 'Tap a tile to lead.'
-          : S.selected ? 'Tap the end you want.'
+        round().board.length === 0 ? 'Pick a tile, then lay it down.'
+          : S.selected ? 'Now tap the end you want.'
           : 'Drag a tile to an end — or tap it, then tap an end.'));
       if (S.selected) {
         var c = el('button', 'ghost small', 'Cancel');
