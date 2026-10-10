@@ -26,7 +26,10 @@ Curaçao-style partnership dominoes:
   in turn.
 - **Winning a round is worth one point.** A blocked round goes to the team
   with the fewer pips; dead level scores nothing for the round.
-- **The match is first to 7, and you must be two clear** — 7-6 is not a win.
+- **The match is first to 10 — but only while the other team is under 5.**
+  The moment the trailing team reaches 5 and the leading team is above 5, the
+  match stops level and is **drawn**. So 10-4 is a win; 6-5, 7-5 and 10-5 are
+  all draws. At 5-5 play continues, since neither team is yet above the line.
 
 ### House rules you can toggle
 
@@ -36,8 +39,8 @@ when the table is created:
 | Option | Default | Effect |
 | --- | --- | --- |
 | Scoring | **Rounds won** | One point per round, or the older style of counting the losers' pips. |
-| Play to | **7** | 5, 7, 9 or 11 rounds (100/150/200 when counting pips). |
-| Must win by 2 | **on** | The target alone is not enough; you need the margin. |
+| Play to | **10** | 7, 10, 12 or 15 rounds (100/150/200 when counting pips). |
+| Draw if both teams reach 5 | **on** | Off means the target alone decides it. |
 | Point against a false pass | **on** | Passing while holding a playable tile scores for the other team. |
 | Capicú bonus | off | Extra for going out on a tile that matched both open ends. |
 | Forced 6-6 opening | on | Round one is opened by the 6-6 holder, who must play it. |

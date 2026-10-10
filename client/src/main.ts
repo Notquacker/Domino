@@ -414,8 +414,8 @@ function renderLanding(): HTMLElement {
   target.id = 'target';
   const fillTargets = (): void => {
     target.replaceChildren();
-    const values = mode.value === 'pips' ? [100, 150, 200] : [5, 7, 9, 11];
-    const preferred = mode.value === 'pips' ? 150 : 7;
+    const values = mode.value === 'pips' ? [100, 150, 200] : [7, 10, 12, 15];
+    const preferred = mode.value === 'pips' ? 150 : 10;
     for (const value of values) {
       const option = document.createElement('option');
       option.value = String(value);
@@ -428,15 +428,18 @@ function renderLanding(): HTMLElement {
   targetLabel.appendChild(target);
   rulesBox.appendChild(targetLabel);
 
-  const winByRow = el('label');
-  const winByBox = el('input') as HTMLInputElement;
-  winByBox.type = 'checkbox';
-  winByBox.id = 'winby';
-  winByBox.checked = true;
-  winByBox.style.width = 'auto';
-  winByRow.appendChild(winByBox);
-  winByRow.appendChild(el('span', 'grow', 'Must win by 2'));
-  rulesBox.appendChild(winByRow);
+  const drawRow = el('label');
+  const drawBox = el('input') as HTMLInputElement;
+  drawBox.type = 'checkbox';
+  drawBox.id = 'drawline';
+  drawBox.checked = true;
+  drawBox.style.width = 'auto';
+  drawRow.appendChild(drawBox);
+  drawRow.appendChild(el('span', 'grow', 'Draw if both teams reach 5'));
+  rulesBox.appendChild(drawRow);
+  rulesBox.appendChild(
+    el('p', 'note', 'With this on you only win by reaching the target while the other team is still under 5 — otherwise the match stops level.'),
+  );
 
   const penaltyRow = el('label');
   const penaltyBox = el('input') as HTMLInputElement;
@@ -472,7 +475,7 @@ function renderLanding(): HTMLElement {
   const toggleForMode = (): void => {
     const pips = mode.value === 'pips';
     countAll.hidden = !pips;
-    winByRow.hidden = pips;
+    drawRow.hidden = pips;
   };
   toggleForMode();
   mode.addEventListener('change', () => {
@@ -494,7 +497,8 @@ function renderLanding(): HTMLElement {
       rules: {
         scoring: pips ? 'pips' : 'rounds',
         targetScore: Number(target.value),
-        winBy: !pips && winByBox.checked ? 2 : 1,
+        winBy: 1,
+        drawAt: !pips && drawBox.checked ? 5 : null,
         falsePassPenalty: penaltyBox.checked ? 1 : 0,
         capicuBonus: capicuBox.checked ? (pips ? 25 : 1) : 0,
         countAllRemaining: countAllBox.checked,
@@ -576,7 +580,8 @@ function renderLobby(v: PlayerView): HTMLElement {
   brand.appendChild(el('h1', undefined, 'Domino'));
   const how =
     v.rules.scoring === 'rounds'
-      ? `First to ${v.rules.targetScore} rounds${v.rules.winBy > 1 ? `, win by ${v.rules.winBy}` : ''}`
+      ? `First to ${v.rules.targetScore}` +
+        (v.rules.drawAt !== null ? ` · drawn if both reach ${v.rules.drawAt}` : '')
       : `Play to ${v.rules.targetScore} points`;
   brand.appendChild(el('p', undefined, `${how} · two against two`));
   wrap.appendChild(brand);
@@ -672,9 +677,7 @@ function renderTopbar(v: PlayerView): HTMLElement {
   score.appendChild(a);
   score.appendChild(el('span', undefined, '–'));
   score.appendChild(b);
-  score.appendChild(
-    el('span', undefined, ` to ${v.rules.targetScore}${v.rules.winBy > 1 ? ' by 2' : ''}`),
-  );
+  score.appendChild(el('span', undefined, ` to ${v.rules.targetScore}`));
   bar.appendChild(score);
 
   const sound = el('button', 'iconbtn', muted ? '🔇' : '🔊') as HTMLButtonElement;
@@ -906,7 +909,17 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
   const overlay = el('div', 'overlay');
   const sheet = el('div', 'sheet');
 
-  if (v.phase === 'matchOver' && v.winner !== null) {
+  if (v.phase === 'matchOver' && v.drawn) {
+    sheet.appendChild(el('h2', undefined, 'Match drawn'));
+    sheet.appendChild(el('div', 'big num', `${v.scores[0]} – ${v.scores[1]}`));
+    sheet.appendChild(
+      el(
+        'p',
+        undefined,
+        `Both teams reached ${v.rules.drawAt ?? 5}, so the match is level. Nobody takes it.`,
+      ),
+    );
+  } else if (v.phase === 'matchOver' && v.winner !== null) {
     const mine = v.you !== null && teamOf(v.you) === v.winner;
     sheet.appendChild(el('h2', undefined, mine ? 'You win the match!' : 'Match over'));
     sheet.appendChild(el('div', 'big num', `${v.scores[0]} – ${v.scores[1]}`));
@@ -951,9 +964,14 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
       }
       sheet.appendChild(breakdown);
     }
-    const need = v.rules.winBy > 1 ? `, win by ${v.rules.winBy}` : '';
+    const line =
+      v.rules.drawAt !== null ? `, drawn if both reach ${v.rules.drawAt}` : '';
     sheet.appendChild(
-      el('p', undefined, `Match: ${v.scores[0]} – ${v.scores[1]} (first to ${v.rules.targetScore}${need})`),
+      el(
+        'p',
+        undefined,
+        `Match: ${v.scores[0]} – ${v.scores[1]} (first to ${v.rules.targetScore}${line})`,
+      ),
     );
   }
 

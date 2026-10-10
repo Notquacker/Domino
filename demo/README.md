@@ -14,7 +14,9 @@ no build output to host beyond that one file.
 ## Why it exists
 
 It is the fastest way to check that the rules match how you actually play,
-without deploying anything. Every house rule is a control on the setup screen.
+without deploying anything. Every house rule is a control on the setup screen:
+scoring by rounds, the target, the drawn line at 5, and the penalty for
+passing on a tile you could have played.
 
 It is **not** the multiplayer game. There is no network, no room code, and no
 hidden state — everyone shares one screen. The real game needs the server in

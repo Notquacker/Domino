@@ -102,10 +102,23 @@ function mergeRules(partial: Partial<HouseRules> | undefined): HouseRules {
         : base.targetScore
       : clampInt(partial.targetScore, 1, 21, base.targetScore);
 
+  // A drawn line at or above the target could never be reached sensibly, so
+  // anything out of range simply turns the rule off.
+  const rawDraw = partial.drawAt;
+  const drawAt =
+    rawDraw === null || rawDraw === undefined
+      ? rawDraw === null
+        ? null
+        : base.drawAt
+      : Number.isFinite(Number(rawDraw)) && Number(rawDraw) >= 1 && Number(rawDraw) < target
+        ? Math.floor(Number(rawDraw))
+        : null;
+
   return {
     scoring,
     targetScore: target,
     winBy: clampInt(partial.winBy, 1, 5, base.winBy),
+    drawAt,
     mustOpenDoubleSix: bool(partial.mustOpenDoubleSix, base.mustOpenDoubleSix),
     strictPassing: bool(partial.strictPassing, base.strictPassing),
     falsePassPenalty: clampInt(partial.falsePassPenalty, 0, 10, base.falsePassPenalty),
@@ -413,6 +426,7 @@ export class Room {
       youMayMove: canAct,
       lastResult: match?.lastResult ?? null,
       winner: match?.winner ?? null,
+      drawn: match?.drawn ?? false,
       log: this.log,
       turnDeadline: match?.phase === 'playing' ? this.turnDeadline : null,
       spectators,

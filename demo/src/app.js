@@ -11,8 +11,9 @@
     names: ['Ana', 'Bo', 'Cyd', 'Dee'],
     rules: {
       scoring: 'rounds',
-      targetScore: 7,
-      winBy: 2,
+      targetScore: 10,
+      winBy: 1,
+      drawAt: 5,
       mustOpenDoubleSix: true,
       strictPassing: false,
       falsePassPenalty: 1,
@@ -154,7 +155,7 @@
     r1.appendChild(el('span', 'grow', 'Play to'));
     var sel = document.createElement('select');
     sel.id = 'target';
-    [5, 7, 9, 11].forEach(function (v) {
+    [7, 10, 12, 15].forEach(function (v) {
       var o = document.createElement('option');
       o.value = String(v); o.textContent = v + ' rounds';
       if (v === S.rules.targetScore) o.selected = true;
@@ -170,14 +171,16 @@
       box.type = 'checkbox'; box.id = id;
       box.checked = onValue ? S.rules[key] === onValue : !!S.rules[key];
       box.addEventListener('change', function () {
-        S.rules[key] = onValue ? (box.checked ? onValue : 0) : box.checked;
+        if (!onValue) { S.rules[key] = box.checked; return; }
+        // The drawn line is off when absent, not when zero.
+        S.rules[key] = box.checked ? onValue : (key === 'drawAt' ? null : 0);
       });
       row.appendChild(box);
       row.appendChild(el('span', 'grow', label));
       og.appendChild(row);
       return box;
     }
-    toggle('winby', 'Must win by 2', 'winBy', 2);
+    toggle('drawline', 'Draw if both teams reach 5', 'drawAt', 5);
     toggle('falsepass', 'Point against a false pass', 'falsePassPenalty', 1);
     toggle('capicu', 'Capicú bonus', 'capicuBonus', 1);
     toggle('double6', 'First round opens with the 6-6', 'mustOpenDoubleSix');
@@ -389,7 +392,12 @@
     var ov = el('div', 'overlay');
     var card = el('div', 'card');
 
-    if (phase === 'matchOver') {
+    if (phase === 'matchOver' && S.match.drawn) {
+      card.appendChild(el('h2', null, 'Match drawn'));
+      card.appendChild(el('div', 'big num', S.match.scores[0] + ' – ' + S.match.scores[1]));
+      card.appendChild(el('p', null,
+        'Both teams reached ' + (S.rules.drawAt || 5) + ', so the match is level. Nobody takes it.'));
+    } else if (phase === 'matchOver') {
       card.appendChild(el('span', 'badge ' + (S.match.winner === 0 ? 'a' : 'b'), TEAMS[S.match.winner]));
       var names = (S.match.winner === 0 ? [0, 2] : [1, 3]).map(function (s) { return S.names[s]; }).join(' & ');
       card.appendChild(el('h2', null, names + ' take the match'));
@@ -426,9 +434,9 @@
         led.appendChild(row);
       });
       card.appendChild(led);
-      var need = S.rules.winBy > 1 ? ', win by ' + S.rules.winBy : '';
+      var line = S.rules.drawAt ? ', drawn if both reach ' + S.rules.drawAt : '';
       card.appendChild(el('p', null, 'Match: ' + S.match.scores[0] + ' – ' + S.match.scores[1] +
-        ' (first to ' + S.rules.targetScore + need + ')'));
+        ' (first to ' + S.rules.targetScore + line + ')'));
     }
 
     var actions = el('div', 'actions');

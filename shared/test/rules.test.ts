@@ -20,6 +20,7 @@ import {
   openEnds,
   parseTile,
   placeTile,
+  matchOutcome,
   matchWinner,
   seededRng,
   startNextRound,
@@ -52,6 +53,7 @@ function match(r: RoundState, over: Partial<MatchState> = {}): MatchState {
     phase: 'playing',
     lastResult: null,
     winner: null,
+    drawn: false,
     ...over,
   };
 }
@@ -653,57 +655,76 @@ describe('scoring by rounds won', () => {
   });
 });
 
-describe('first to seven, win by two', () => {
-  it('does not end the match at 7-6', () => {
-    assert.equal(matchWinner(DEFAULT_RULES, [7, 6]), null);
-    assert.equal(matchWinner(DEFAULT_RULES, [6, 7]), null);
+describe('first to ten, drawn at five', () => {
+  const R = DEFAULT_RULES;
+
+  it('is not over early on', () => {
+    assert.deepEqual(matchOutcome(R, [0, 0]), { over: false, winner: null, drawn: false });
+    assert.deepEqual(matchOutcome(R, [4, 2]), { over: false, winner: null, drawn: false });
   });
 
-  it('ends it at 8-6', () => {
-    assert.equal(matchWinner(DEFAULT_RULES, [8, 6]), 0);
-    assert.equal(matchWinner(DEFAULT_RULES, [6, 8]), 1);
+  it('wins at ten while the other team is under five', () => {
+    assert.deepEqual(matchOutcome(R, [10, 4]), { over: true, winner: 0, drawn: false });
+    assert.deepEqual(matchOutcome(R, [4, 10]), { over: true, winner: 1, drawn: false });
+    assert.deepEqual(matchOutcome(R, [10, 0]), { over: true, winner: 0, drawn: false });
   });
 
-  it('ends it at 7-5 and at 7-0', () => {
-    assert.equal(matchWinner(DEFAULT_RULES, [7, 5]), 0);
-    assert.equal(matchWinner(DEFAULT_RULES, [7, 0]), 0);
+  it('stops level the moment the trailing team reaches five', () => {
+    assert.deepEqual(matchOutcome(R, [6, 5]), { over: true, winner: null, drawn: true });
+    assert.deepEqual(matchOutcome(R, [5, 6]), { over: true, winner: null, drawn: true });
+    assert.deepEqual(matchOutcome(R, [7, 5]), { over: true, winner: null, drawn: true });
   });
 
-  it('keeps going while the lead is only one, however high the score', () => {
-    assert.equal(matchWinner(DEFAULT_RULES, [11, 10]), null);
-    assert.equal(matchWinner(DEFAULT_RULES, [12, 10]), 0);
+  it('keeps playing at five all, since neither team is above the line', () => {
+    assert.deepEqual(matchOutcome(R, [5, 5]), { over: false, winner: null, drawn: false });
   });
 
-  it('needs no margin when the table asks for none', () => {
-    assert.equal(matchWinner(roundRules({ winBy: 1 }), [7, 6]), 0);
+  it('is still a draw when the trailing team jumps past five', () => {
+    // Penalties can move a score by more than one, so the line is "at least
+    // five", not "exactly five".
+    assert.equal(matchOutcome(R, [8, 6]).drawn, true);
+    assert.equal(matchOutcome(R, [9, 7]).drawn, true);
   });
 
-  it('plays a match out past the target when the teams stay level', () => {
-    // Drive rounds by hand so the scores are forced, not random.
+  it('draws rather than wins when both happen in the same round', () => {
+    // Reaching ten does not rescue a match the other team has levelled.
+    assert.deepEqual(matchOutcome(R, [10, 5]), { over: true, winner: null, drawn: true });
+    assert.deepEqual(matchOutcome(R, [10, 9]), { over: true, winner: null, drawn: true });
+  });
+
+  it('needs no margin — ten is enough', () => {
+    assert.equal(matchOutcome(R, [10, 4]).winner, 0);
+  });
+
+  it('plays on without the rule when the line is switched off', () => {
+    const noDraw = roundRules({ drawAt: null, targetScore: 10 });
+    assert.deepEqual(matchOutcome(noDraw, [7, 5]), { over: false, winner: null, drawn: false });
+    assert.deepEqual(matchOutcome(noDraw, [10, 9]), { over: true, winner: 0, drawn: false });
+  });
+
+  it('leaves the pip game alone', () => {
+    assert.equal(PIP_RULES.drawAt, null);
+    assert.equal(matchOutcome(PIP_RULES, [80, 60]).over, false);
+    assert.equal(matchOutcome(PIP_RULES, [150, 90]).winner, 0);
+  });
+
+  it('ends a real match as a draw, not a win', () => {
     const board = placeTile([], '3-3', 'right');
-    let state = match(round({ hands: [['3-5'], ['6-6'], ['0-1'], ['4-4']], board }), {
+    const m = match(round({ hands: [['3-5'], ['6-6'], ['0-1'], ['4-4']], board }), {
       rules: roundRules(),
-      scores: [6, 6],
+      scores: [5, 5],
     });
-    const out = applyMove(state, 0, { kind: 'play', tile: '3-5', end: 'right' });
-    assert.deepEqual(out.match.scores, [7, 6]);
-    assert.equal(out.match.phase, 'roundOver', '7-6 is not a win');
+    const out = applyMove(m, 0, { kind: 'play', tile: '3-5', end: 'right' });
+    assert.deepEqual(out.match.scores, [6, 5]);
+    assert.equal(out.match.phase, 'matchOver');
     assert.equal(out.match.winner, null);
+    assert.equal(out.match.drawn, true, 'the match is drawn, not merely unfinished');
   });
 
-  it('a false pass can carry a team over the line', () => {
-    const board = placeTile([], '0-0', 'right');
-    let state = match(round({ hands: [['1-2'], ['0-6'], ['3-4'], ['5-5']], board }), {
-      rules: roundRules(),
-      scores: [6, 0],
-    });
-    for (const seat of [0, 1, 2, 3] as Seat[]) {
-      state = applyMove(state, seat, { kind: 'pass' }).match;
-    }
-    // Team A takes the round on pips (1) and the penalty for seat 1's bluff (1).
-    assert.deepEqual(state.scores, [8, 0]);
-    assert.equal(state.phase, 'matchOver');
-    assert.equal(state.winner, 0);
+  it('tells a drawn match apart from one still in progress', () => {
+    const m = newMatch(roundRules(), seededRng(5));
+    assert.equal(m.drawn, false);
+    assert.equal(m.phase, 'playing');
   });
 });
 
@@ -731,10 +752,16 @@ describe('simulated matches under the house rules', () => {
       }
 
       const [a, b] = state.scores;
-      const winner = state.winner!;
-      const lead = winner === 0 ? a - b : b - a;
-      assert.ok(lead >= 2, `won by only ${lead} at ${a}-${b}`);
-      assert.ok(Math.max(a, b) >= 7, `winner finished below the target at ${a}-${b}`);
+      const low = Math.min(a, b);
+      const high = Math.max(a, b);
+      if (state.drawn) {
+        assert.equal(state.winner, null, 'a drawn match has no winner');
+        assert.ok(low >= 5 && high > 5, `drawn at ${a}-${b}, which is not on the line`);
+      } else {
+        assert.ok(state.winner !== null, 'an undrawn finish must have a winner');
+        assert.ok(high >= 10, `winner finished below the target at ${a}-${b}`);
+        assert.ok(low < 5, `won at ${a}-${b} although the other team reached the line`);
+      }
     }
   });
 });

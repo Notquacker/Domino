@@ -73,10 +73,18 @@ export interface HouseRules {
   /** Match runs until a team reaches this many points. */
   readonly targetScore: number;
   /**
-   * The winner must also lead by this much. 2 makes 7-6 no win; 1 means
-   * reaching the target is enough.
+   * The winner must also lead by this much. 1 means reaching the target is
+   * enough.
    */
   readonly winBy: number;
+  /**
+   * The drawn-match line. Once the trailing team has at least this many
+   * points and the leading team is above it, the match stops level — so with
+   * a line of 5, a score of 6-5 is a draw and nobody plays on. A team can
+   * only win outright by reaching the target while the other stays below the
+   * line. Null disables the rule.
+   */
+  readonly drawAt: number | null;
   /** First round of a match is opened by whoever holds the 6-6, who must play it. */
   readonly mustOpenDoubleSix: boolean;
   /**
@@ -107,8 +115,9 @@ export interface HouseRules {
 
 export const DEFAULT_RULES: HouseRules = {
   scoring: 'rounds',
-  targetScore: 7,
-  winBy: 2,
+  targetScore: 10,
+  winBy: 1,
+  drawAt: 5,
   mustOpenDoubleSix: true,
   strictPassing: false,
   falsePassPenalty: 1,
@@ -122,6 +131,7 @@ export const PIP_RULES: HouseRules = {
   scoring: 'pips',
   targetScore: 150,
   winBy: 1,
+  drawAt: null,
 };
 
 /** A pass, recorded so it can be judged once every hand is face up. */
@@ -175,6 +185,8 @@ export interface MatchState {
   readonly phase: Phase;
   readonly lastResult: RoundResult | null;
   readonly winner: Team | null;
+  /** True when the match ended level on the drawn line rather than being won. */
+  readonly drawn: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +357,7 @@ export function newMatch(rules: HouseRules, rng: Rng): MatchState {
     phase: 'playing',
     lastResult: null,
     winner: null,
+    drawn: false,
   };
 }
 
@@ -555,36 +568,62 @@ function finishRound(
     nextStarter,
   };
 
-  const champion = matchWinner(rules, scores);
+  const outcome = matchOutcome(rules, scores);
 
   return {
     match: {
       ...match,
       round,
       scores,
-      phase: champion !== null ? 'matchOver' : 'roundOver',
+      phase: outcome.over ? 'matchOver' : 'roundOver',
       lastResult: result,
-      winner: champion,
+      winner: outcome.winner,
+      drawn: outcome.drawn,
     },
     result,
     note: describeResult(result),
   };
 }
 
+export interface MatchOutcome {
+  /** True once the match is finished, won or drawn. */
+  readonly over: boolean;
+  readonly winner: Team | null;
+  readonly drawn: boolean;
+}
+
 /**
- * Who, if anyone, has won the match. A team must both reach the target and
- * lead by the required margin, so with "first to 7, win by 2" a 7-6 score
- * keeps the match alive.
+ * How the match stands.
+ *
+ * The drawn line is checked first and ends the match on the spot: once the
+ * trailing team reaches it and the leader is above it, the game is level and
+ * there is nothing left to play for. A team therefore only wins outright by
+ * reaching the target while the other is still below the line.
  */
+export function matchOutcome(
+  rules: HouseRules,
+  scores: readonly [number, number],
+): MatchOutcome {
+  const [a, b] = scores;
+  const high = Math.max(a, b);
+  const low = Math.min(a, b);
+
+  if (rules.drawAt !== null && low >= rules.drawAt && high > rules.drawAt) {
+    return { over: true, winner: null, drawn: true };
+  }
+
+  const margin = Math.max(1, rules.winBy);
+  if (a >= rules.targetScore && a - b >= margin) return { over: true, winner: 0, drawn: false };
+  if (b >= rules.targetScore && b - a >= margin) return { over: true, winner: 1, drawn: false };
+  return { over: false, winner: null, drawn: false };
+}
+
+/** Convenience wrapper: the winning team, or null when not won. */
 export function matchWinner(
   rules: HouseRules,
   scores: readonly [number, number],
 ): Team | null {
-  const margin = Math.max(1, rules.winBy);
-  const [a, b] = scores;
-  if (a >= rules.targetScore && a - b >= margin) return 0;
-  if (b >= rules.targetScore && b - a >= margin) return 1;
-  return null;
+  return matchOutcome(rules, scores).winner;
 }
 
 export function describeResult(r: RoundResult): string {

@@ -45,6 +45,8 @@ export interface PlayerView {
   readonly youMayMove: boolean;
   readonly lastResult: RoundResult | null;
   readonly winner: Team | null;
+  /** True when the match finished level on the drawn line. */
+  readonly drawn: boolean;
   readonly log: readonly string[];
   /** Epoch ms by which the player on turn must move, or null if untimed. */
   readonly turnDeadline: number | null;
