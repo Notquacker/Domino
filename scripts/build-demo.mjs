@@ -71,3 +71,13 @@ ${page}
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(OUT, html);
 console.log(`demo built: ${OUT} (${(Buffer.byteLength(html) / 1024).toFixed(1)} kB, one file, no server)`);
+
+/**
+ * The same page without a document skeleton, for publishing as a shareable
+ * artifact — that host supplies its own <head> and <body>. Emitted from the
+ * same sources as the standalone build so the two cannot drift apart.
+ */
+const BODY_OUT = resolve(OUT_DIR, 'artifact-body.html');
+const body = `${page}\n<script>${engine}</script>\n<script>${app}</script>\n`;
+writeFileSync(BODY_OUT, body);
+console.log(`artifact body: ${BODY_OUT} (${(Buffer.byteLength(body) / 1024).toFixed(1)} kB)`);
