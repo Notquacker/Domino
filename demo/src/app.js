@@ -18,7 +18,7 @@
       strictPassing: false,
       falsePassPenalty: 1,
       countAllRemaining: false,
-      capicuBonus: 0
+      capicuPoints: 2
     },
     match: null,
     solo: false,
@@ -182,7 +182,7 @@
     }
     toggle('drawline', 'Draw if both teams reach 5', 'drawAt', 5);
     toggle('falsepass', 'Point against a false pass', 'falsePassPenalty', 1);
-    toggle('capicu', 'Capicú bonus', 'capicuBonus', 1);
+    toggle('capicu', 'Capicú counts double', 'capicuPoints', 2);
     toggle('double6', 'First round opens with the 6-6', 'mustOpenDoubleSix');
 
     var soloRow = el('label', 'optrow');

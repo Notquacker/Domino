@@ -458,10 +458,15 @@ function renderLanding(): HTMLElement {
   const capicuBox = el('input') as HTMLInputElement;
   capicuBox.type = 'checkbox';
   capicuBox.id = 'capicu';
+  capicuBox.checked = true;
   capicuBox.style.width = 'auto';
   capicu.appendChild(capicuBox);
-  capicu.appendChild(el('span', 'grow', 'Capicú bonus'));
+  const capicuText = el('span', 'grow', 'Capicú counts double');
+  capicu.appendChild(capicuText);
   rulesBox.appendChild(capicu);
+  rulesBox.appendChild(
+    el('p', 'note', 'Go out on a tile that fits both open ends and the round is worth 2 instead of 1.'),
+  );
 
   const countAll = el('label');
   const countAllBox = el('input') as HTMLInputElement;
@@ -476,6 +481,7 @@ function renderLanding(): HTMLElement {
     const pips = mode.value === 'pips';
     countAll.hidden = !pips;
     drawRow.hidden = pips;
+    capicuText.textContent = pips ? 'Capicú bonus (+25 pips)' : 'Capicú counts double';
   };
   toggleForMode();
   mode.addEventListener('change', () => {
@@ -500,7 +506,7 @@ function renderLanding(): HTMLElement {
         winBy: 1,
         drawAt: !pips && drawBox.checked ? 5 : null,
         falsePassPenalty: penaltyBox.checked ? 1 : 0,
-        capicuBonus: capicuBox.checked ? (pips ? 25 : 1) : 0,
+        capicuPoints: capicuBox.checked ? (pips ? 25 : 2) : 0,
         countAllRemaining: countAllBox.checked,
       },
     };

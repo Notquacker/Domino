@@ -123,7 +123,7 @@ function mergeRules(partial: Partial<HouseRules> | undefined): HouseRules {
     strictPassing: bool(partial.strictPassing, base.strictPassing),
     falsePassPenalty: clampInt(partial.falsePassPenalty, 0, 10, base.falsePassPenalty),
     countAllRemaining: bool(partial.countAllRemaining, base.countAllRemaining),
-    capicuBonus: clampInt(partial.capicuBonus, 0, 50, base.capicuBonus),
+    capicuPoints: clampInt(partial.capicuPoints, 0, 50, base.capicuPoints),
   };
 }
 

@@ -107,10 +107,14 @@ export interface HouseRules {
    */
   readonly countAllRemaining: boolean;
   /**
-   * Extra points for closing the round with a tile that matched both open ends
-   * ("capicu"). Zero disables the bonus.
+   * What winning a round with a capicu is worth — going out on a tile that
+   * matched both open ends.
+   *
+   * Under round scoring this REPLACES the usual single point, so 2 means a
+   * capicu round counts double rather than paying 1 plus a bonus. Under pip
+   * scoring it is added to the pips instead. Zero turns the rule off.
    */
-  readonly capicuBonus: number;
+  readonly capicuPoints: number;
 }
 
 export const DEFAULT_RULES: HouseRules = {
@@ -122,7 +126,7 @@ export const DEFAULT_RULES: HouseRules = {
   strictPassing: false,
   falsePassPenalty: 1,
   countAllRemaining: false,
-  capicuBonus: 0,
+  capicuPoints: 2,
 };
 
 /** Sensible defaults for the older pip-counting game. */
@@ -132,6 +136,8 @@ export const PIP_RULES: HouseRules = {
   targetScore: 150,
   winBy: 1,
   drawAt: null,
+  // The pip game traditionally plays capicu as an optional extra.
+  capicuPoints: 0,
 };
 
 /** A pass, recorded so it can be judged once every hand is face up. */
@@ -532,11 +538,16 @@ function finishRound(
 
   const awarded: [number, number] = [0, 0];
 
-  // What winning the round itself is worth.
+  // What winning the round itself is worth. A capicu is worth more: under
+  // round scoring it replaces the single point outright.
+  const capicuCounts = capicu && rules.capicuPoints > 0;
   if (winningTeam !== null) {
-    const bonus = capicu ? rules.capicuBonus : 0;
-    awarded[winningTeam] +=
-      rules.scoring === 'rounds' ? 1 + bonus : scoreFor(rules, remaining, winningTeam) + bonus;
+    if (rules.scoring === 'rounds') {
+      awarded[winningTeam] += capicuCounts ? rules.capicuPoints : 1;
+    } else {
+      awarded[winningTeam] +=
+        scoreFor(rules, remaining, winningTeam) + (capicuCounts ? rules.capicuPoints : 0);
+    }
   }
 
   // Now the hands are face up, so every pass can be judged. Passing on a
@@ -563,7 +574,7 @@ function finishRound(
     falsePasses,
     penalties,
     dominoedBy,
-    capicu: capicu && rules.capicuBonus > 0,
+    capicu: capicuCounts,
     remaining,
     nextStarter,
   };

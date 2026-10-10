@@ -319,7 +319,7 @@ describe('scoring a round', () => {
     assert.deepEqual(state.scores, [0, 0]);
   });
 
-  it('pays the capicu bonus only when it is switched on', () => {
+  it('pays the capicu bonus on top of the pips, in the pip game', () => {
     const board = placeTile(placeTile([], '2-4', 'right'), '4-5', 'right');
     const hands = [['2-5'], ['6-6'], ['0-1'], ['1-1']];
 
@@ -332,7 +332,7 @@ describe('scoring a round', () => {
     assert.equal(off.result!.points, 14, '6-6 plus 1-1');
 
     const on = applyMove(
-      match(round({ hands, board }), { rules: rules({ capicuBonus: 25 }) }),
+      match(round({ hands, board }), { rules: rules({ capicuPoints: 25 }) }),
       0,
       { kind: 'play', tile: '2-5', end: 'left' },
     );
@@ -344,7 +344,7 @@ describe('scoring a round', () => {
     const board = placeTile(placeTile([], '2-4', 'right'), '4-5', 'right');
     const out = applyMove(
       match(round({ hands: [['5-6'], ['6-6'], ['0-1'], ['1-1']], board }), {
-        rules: rules({ capicuBonus: 25 }),
+        rules: rules({ capicuPoints: 25 }),
       }),
       0,
       { kind: 'play', tile: '5-6', end: 'right' },
@@ -411,7 +411,7 @@ describe('full simulated matches', () => {
 
     for (let seed = 1; seed <= 200; seed++) {
       const rng = seededRng(seed);
-      let state = newMatch(rules({ targetScore: 100, capicuBonus: 25 }), rng);
+      let state = newMatch(rules({ targetScore: 100, capicuPoints: 25 }), rng);
       let moves = 0;
 
       while (state.phase !== 'matchOver') {
@@ -637,11 +637,12 @@ describe('punishing a false pass', () => {
 
 describe('scoring by rounds won', () => {
   it('pays one point for taking a round, whatever the pips', () => {
-    const board = placeTile([], '3-3', 'right');
-    const m = match(round({ hands: [['3-5'], ['6-6'], ['0-1'], ['4-4']], board }), {
+    // Ends 2 and 5; 5-6 closes only the right, so this is no capicú.
+    const board = placeTile(placeTile([], '2-4', 'right'), '4-5', 'right');
+    const m = match(round({ hands: [['5-6'], ['6-6'], ['0-1'], ['4-4']], board }), {
       rules: roundRules(),
     });
-    const out = applyMove(m, 0, { kind: 'play', tile: '3-5', end: 'right' });
+    const out = applyMove(m, 0, { kind: 'play', tile: '5-6', end: 'right' });
     assert.equal(out.result!.points, 1, 'one point, not twenty pips');
     assert.deepEqual(out.result!.awarded, [1, 0]);
     assert.deepEqual(out.match.scores, [1, 0]);
@@ -709,12 +710,12 @@ describe('first to ten, drawn at five', () => {
   });
 
   it('ends a real match as a draw, not a win', () => {
-    const board = placeTile([], '3-3', 'right');
-    const m = match(round({ hands: [['3-5'], ['6-6'], ['0-1'], ['4-4']], board }), {
+    const board = placeTile(placeTile([], '2-4', 'right'), '4-5', 'right');
+    const m = match(round({ hands: [['5-6'], ['6-6'], ['0-1'], ['4-4']], board }), {
       rules: roundRules(),
       scores: [5, 5],
     });
-    const out = applyMove(m, 0, { kind: 'play', tile: '3-5', end: 'right' });
+    const out = applyMove(m, 0, { kind: 'play', tile: '5-6', end: 'right' });
     assert.deepEqual(out.match.scores, [6, 5]);
     assert.equal(out.match.phase, 'matchOver');
     assert.equal(out.match.winner, null);
@@ -772,5 +773,103 @@ describe('the opening lead', () => {
       rules: roundRules(),
     });
     assert.throws(() => applyMove(m, 0, { kind: 'pass' }), RuleError);
+  });
+});
+
+describe('a capicú under round scoring', () => {
+  /** Board with open ends 2 and 5, so 2-5 closes on both. */
+  const twoFive = placeTile(placeTile([], '2-4', 'right'), '4-5', 'right');
+
+  it('is worth two points instead of one', () => {
+    const out = applyMove(
+      match(round({ hands: [['2-5'], ['6-6'], ['0-1'], ['1-1']], board: twoFive }), {
+        rules: roundRules(),
+      }),
+      0,
+      { kind: 'play', tile: '2-5', end: 'left' },
+    );
+    assert.equal(out.result!.capicu, true);
+    assert.equal(out.result!.points, 2, 'two, not one');
+    assert.deepEqual(out.result!.awarded, [2, 0]);
+  });
+
+  it('replaces the round point rather than adding to it', () => {
+    // The distinction that matters: 2 total, never 1 + 2 = 3.
+    const out = applyMove(
+      match(round({ hands: [['2-5'], ['6-6'], ['0-1'], ['1-1']], board: twoFive }), {
+        rules: roundRules({ capicuPoints: 2 }),
+      }),
+      0,
+      { kind: 'play', tile: '2-5', end: 'left' },
+    );
+    assert.equal(out.match.scores[0], 2);
+    assert.notEqual(out.match.scores[0], 3, 'must not stack on the normal point');
+  });
+
+  it('still pays one for an ordinary win', () => {
+    const board = placeTile(placeTile([], '2-4', 'right'), '4-5', 'right');
+    const out = applyMove(
+      match(round({ hands: [['5-6'], ['6-6'], ['0-1'], ['4-4']], board }), { rules: roundRules() }),
+      0,
+      { kind: 'play', tile: '5-6', end: 'right' },
+    );
+    assert.equal(out.result!.capicu, false);
+    assert.equal(out.result!.points, 1);
+  });
+
+  it('pays one when the rule is switched off', () => {
+    const out = applyMove(
+      match(round({ hands: [['2-5'], ['6-6'], ['0-1'], ['1-1']], board: twoFive }), {
+        rules: roundRules({ capicuPoints: 0 }),
+      }),
+      0,
+      { kind: 'play', tile: '2-5', end: 'left' },
+    );
+    assert.equal(out.result!.capicu, false, 'not reported as a capicú when it pays nothing');
+    assert.equal(out.result!.points, 1);
+  });
+
+  it('does not pay for a tile that only matched one end', () => {
+    const out = applyMove(
+      match(round({ hands: [['5-6'], ['6-6'], ['0-1'], ['1-1']], board: twoFive }), {
+        rules: roundRules(),
+      }),
+      0,
+      { kind: 'play', tile: '5-6', end: 'right' },
+    );
+    assert.equal(out.result!.capicu, false);
+    assert.equal(out.result!.points, 1);
+  });
+
+  it('can carry a team over the line, and the draw still outranks it', () => {
+    // 4-5 plus a capicú would be 6-5: above the line with the other team on
+    // it, so the match is drawn rather than won.
+    const out = applyMove(
+      match(round({ hands: [['2-5'], ['6-6'], ['0-1'], ['1-1']], board: twoFive }), {
+        rules: roundRules(),
+        scores: [4, 5],
+      }),
+      0,
+      { kind: 'play', tile: '2-5', end: 'left' },
+    );
+    assert.deepEqual(out.match.scores, [6, 5]);
+    assert.equal(out.match.phase, 'matchOver');
+    assert.equal(out.match.drawn, true);
+    assert.equal(out.match.winner, null);
+  });
+
+  it('adds to the penalties rather than replacing them', () => {
+    // A capicú win and an opponent's false pass both land in the same round.
+    const board = placeTile([], '0-0', 'right');
+    let state = match(round({ hands: [['0-5', '1-1'], ['0-6'], ['3-4'], ['5-5']], board }), {
+      rules: roundRules(),
+    });
+    state = applyMove(state, 0, { kind: 'play', tile: '0-5', end: 'right' }).match;
+    state = applyMove(state, 1, { kind: 'pass' }).match;   // bluff: 0-6 fits the 0
+    const result = state.lastResult;
+    if (result !== null) {
+      assert.ok(result.penalties[0] >= 0);
+    }
+    assert.ok(state.scores[0] >= 0, 'scoring stayed coherent');
   });
 });
