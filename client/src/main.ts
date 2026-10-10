@@ -435,10 +435,10 @@ function renderLanding(): HTMLElement {
   drawBox.checked = true;
   drawBox.style.width = 'auto';
   drawRow.appendChild(drawBox);
-  drawRow.appendChild(el('span', 'grow', 'Draw if both teams reach 5'));
+  drawRow.appendChild(el('span', 'grow', 'Draw once both teams reach 5'));
   rulesBox.appendChild(drawRow);
   rulesBox.appendChild(
-    el('p', 'note', 'With this on you only win by reaching the target while the other team is still under 5 — otherwise the match stops level.'),
+    el('p', 'note', 'The moment both teams have 5 the match is drawn, 5-5 included. You only win by reaching the target while the other team is still under 5.'),
   );
 
   const penaltyRow = el('label');
@@ -587,7 +587,7 @@ function renderLobby(v: PlayerView): HTMLElement {
   const how =
     v.rules.scoring === 'rounds'
       ? `First to ${v.rules.targetScore}` +
-        (v.rules.drawAt !== null ? ` · drawn if both reach ${v.rules.drawAt}` : '')
+        (v.rules.drawAt !== null ? ` · drawn once both reach ${v.rules.drawAt}` : '')
       : `Play to ${v.rules.targetScore} points`;
   brand.appendChild(el('p', undefined, `${how} · two against two`));
   wrap.appendChild(brand);
@@ -971,7 +971,7 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
       sheet.appendChild(breakdown);
     }
     const line =
-      v.rules.drawAt !== null ? `, drawn if both reach ${v.rules.drawAt}` : '';
+      v.rules.drawAt !== null ? `, drawn once both reach ${v.rules.drawAt}` : '';
     sheet.appendChild(
       el(
         'p',

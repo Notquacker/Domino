@@ -78,11 +78,10 @@ export interface HouseRules {
    */
   readonly winBy: number;
   /**
-   * The drawn-match line. Once the trailing team has at least this many
-   * points and the leading team is above it, the match stops level — so with
-   * a line of 5, a score of 6-5 is a draw and nobody plays on. A team can
-   * only win outright by reaching the target while the other stays below the
-   * line. Null disables the rule.
+   * The drawn-match line. Once BOTH teams have reached it the match stops
+   * level, so with a line of 5 the scores 5-5, 6-5 and 10-5 are all draws.
+   * The only way to win is to reach the target while the other team is still
+   * below the line. Null disables the rule.
    */
   readonly drawAt: number | null;
   /** First round of a match is opened by whoever holds the 6-6, who must play it. */
@@ -606,20 +605,20 @@ export interface MatchOutcome {
 /**
  * How the match stands.
  *
- * The drawn line is checked first and ends the match on the spot: once the
- * trailing team reaches it and the leader is above it, the game is level and
- * there is nothing left to play for. A team therefore only wins outright by
- * reaching the target while the other is still below the line.
+ * The drawn line is checked first and ends the match on the spot: the moment
+ * the second team reaches it, both sides are on the line and the game is
+ * level. A team therefore only wins outright by reaching the target while the
+ * other is still below the line — the race is to get clear before they catch
+ * up, not merely to arrive first.
  */
 export function matchOutcome(
   rules: HouseRules,
   scores: readonly [number, number],
 ): MatchOutcome {
   const [a, b] = scores;
-  const high = Math.max(a, b);
   const low = Math.min(a, b);
 
-  if (rules.drawAt !== null && low >= rules.drawAt && high > rules.drawAt) {
+  if (rules.drawAt !== null && low >= rules.drawAt) {
     return { over: true, winner: null, drawn: true };
   }
 

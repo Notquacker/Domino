@@ -670,14 +670,19 @@ describe('first to ten, drawn at five', () => {
     assert.deepEqual(matchOutcome(R, [10, 0]), { over: true, winner: 0, drawn: false });
   });
 
-  it('stops level the moment the trailing team reaches five', () => {
+  it('stops level the moment the second team reaches five', () => {
     assert.deepEqual(matchOutcome(R, [6, 5]), { over: true, winner: null, drawn: true });
     assert.deepEqual(matchOutcome(R, [5, 6]), { over: true, winner: null, drawn: true });
     assert.deepEqual(matchOutcome(R, [7, 5]), { over: true, winner: null, drawn: true });
   });
 
-  it('keeps playing at five all, since neither team is above the line', () => {
-    assert.deepEqual(matchOutcome(R, [5, 5]), { over: false, winner: null, drawn: false });
+  it('draws at five all', () => {
+    assert.deepEqual(matchOutcome(R, [5, 5]), { over: true, winner: null, drawn: true });
+  });
+
+  it('keeps playing while only one team is on the line', () => {
+    assert.deepEqual(matchOutcome(R, [5, 4]), { over: false, winner: null, drawn: false });
+    assert.deepEqual(matchOutcome(R, [9, 4]), { over: false, winner: null, drawn: false });
   });
 
   it('is still a draw when the trailing team jumps past five', () => {
@@ -699,6 +704,7 @@ describe('first to ten, drawn at five', () => {
 
   it('plays on without the rule when the line is switched off', () => {
     const noDraw = roundRules({ drawAt: null, targetScore: 10 });
+    assert.deepEqual(matchOutcome(noDraw, [5, 5]), { over: false, winner: null, drawn: false });
     assert.deepEqual(matchOutcome(noDraw, [7, 5]), { over: false, winner: null, drawn: false });
     assert.deepEqual(matchOutcome(noDraw, [10, 9]), { over: true, winner: 0, drawn: false });
   });
@@ -709,17 +715,29 @@ describe('first to ten, drawn at five', () => {
     assert.equal(matchOutcome(PIP_RULES, [150, 90]).winner, 0);
   });
 
-  it('ends a real match as a draw, not a win', () => {
+  it('ends a real match as a draw the moment the second team reaches the line', () => {
     const board = placeTile(placeTile([], '2-4', 'right'), '4-5', 'right');
     const m = match(round({ hands: [['5-6'], ['6-6'], ['0-1'], ['4-4']], board }), {
       rules: roundRules(),
-      scores: [5, 5],
+      scores: [4, 5],
     });
     const out = applyMove(m, 0, { kind: 'play', tile: '5-6', end: 'right' });
-    assert.deepEqual(out.match.scores, [6, 5]);
+    assert.deepEqual(out.match.scores, [5, 5]);
     assert.equal(out.match.phase, 'matchOver');
     assert.equal(out.match.winner, null);
-    assert.equal(out.match.drawn, true, 'the match is drawn, not merely unfinished');
+    assert.equal(out.match.drawn, true, 'five all is a draw');
+  });
+
+  it('lets a team run clear to ten while the other stays under the line', () => {
+    const board = placeTile(placeTile([], '2-4', 'right'), '4-5', 'right');
+    const m = match(round({ hands: [['5-6'], ['6-6'], ['0-1'], ['4-4']], board }), {
+      rules: roundRules(),
+      scores: [9, 4],
+    });
+    const out = applyMove(m, 0, { kind: 'play', tile: '5-6', end: 'right' });
+    assert.deepEqual(out.match.scores, [10, 4]);
+    assert.equal(out.match.winner, 0);
+    assert.equal(out.match.drawn, false);
   });
 
   it('tells a drawn match apart from one still in progress', () => {
@@ -757,7 +775,7 @@ describe('simulated matches under the house rules', () => {
       const high = Math.max(a, b);
       if (state.drawn) {
         assert.equal(state.winner, null, 'a drawn match has no winner');
-        assert.ok(low >= 5 && high > 5, `drawn at ${a}-${b}, which is not on the line`);
+        assert.ok(low >= 5, `drawn at ${a}-${b}, where the second team is not on the line`);
       } else {
         assert.ok(state.winner !== null, 'an undrawn finish must have a winner');
         assert.ok(high >= 10, `winner finished below the target at ${a}-${b}`);
@@ -842,8 +860,8 @@ describe('a capicú under round scoring', () => {
   });
 
   it('can carry a team over the line, and the draw still outranks it', () => {
-    // 4-5 plus a capicú would be 6-5: above the line with the other team on
-    // it, so the match is drawn rather than won.
+    // 4-5 plus a capicú is 6-5: both teams on the line, so the match is
+    // drawn rather than won.
     const out = applyMove(
       match(round({ hands: [['2-5'], ['6-6'], ['0-1'], ['1-1']], board: twoFive }), {
         rules: roundRules(),

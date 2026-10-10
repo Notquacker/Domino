@@ -28,9 +28,10 @@ Curaçao-style partnership dominoes:
   a tile that matched both open ends. A blocked round goes to the team with
   the fewer pips; dead level scores nothing for the round.
 - **The match is first to 10 — but only while the other team is under 5.**
-  The moment the trailing team reaches 5 and the leading team is above 5, the
-  match stops level and is **drawn**. So 10-4 is a win; 6-5, 7-5 and 10-5 are
-  all draws. At 5-5 play continues, since neither team is yet above the line.
+  The moment **both** teams have reached 5 the match stops level and is
+  **drawn**, 5-5 included. So 10-4 is a win, while 5-5, 6-5, 7-5 and 10-5 are
+  all draws. The race is to get clear to 10 before the other team catches up
+  to 5, not merely to arrive first.
 
 ### House rules you can toggle
 
@@ -41,7 +42,7 @@ when the table is created:
 | --- | --- | --- |
 | Scoring | **Rounds won** | One point per round, or the older style of counting the losers' pips. |
 | Play to | **10** | 7, 10, 12 or 15 rounds (100/150/200 when counting pips). |
-| Draw if both teams reach 5 | **on** | Off means the target alone decides it. |
+| Draw once both teams reach 5 | **on** | Off means the target alone decides it. |
 | Point against a false pass | **on** | Passing while holding a playable tile scores for the other team. |
 | Capicú counts double | **on** | A capicú round is worth 2 instead of 1 (+25 pips in the pip game). |
 | Forced 6-6 opening | on | Round one is opened by the 6-6 holder, who must play it. |

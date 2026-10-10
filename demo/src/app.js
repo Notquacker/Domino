@@ -180,7 +180,7 @@
       og.appendChild(row);
       return box;
     }
-    toggle('drawline', 'Draw if both teams reach 5', 'drawAt', 5);
+    toggle('drawline', 'Draw once both teams reach 5', 'drawAt', 5);
     toggle('falsepass', 'Point against a false pass', 'falsePassPenalty', 1);
     toggle('capicu', 'Capicú counts double', 'capicuPoints', 2);
     toggle('double6', 'First round opens with the 6-6', 'mustOpenDoubleSix');
@@ -406,7 +406,16 @@
       var head = r.kind === 'tie' ? 'Blocked, and level'
         : r.kind === 'blocked' ? 'Blocked' : (S.names[r.dominoedBy] || 'A player') + ' went out';
       card.appendChild(el('h2', null, head + (r.capicu ? ' — capicú!' : '')));
-      card.appendChild(el('div', 'big num', r.points > 0 ? '+' + r.points : '0'));
+      // r.points is the total that moved across BOTH teams, which reads as a
+      // nonsense score. Show what the round winner gained, then the split.
+      var gotA = r.awarded ? r.awarded[0] : 0;
+      var gotB = r.awarded ? r.awarded[1] : 0;
+      var headline = r.winningTeam === null ? Math.max(gotA, gotB)
+        : (r.winningTeam === 0 ? gotA : gotB);
+      card.appendChild(el('div', 'big num', headline > 0 ? '+' + headline : '0'));
+      if (gotA > 0 && gotB > 0) {
+        card.appendChild(el('p', null, TEAMS[0] + ' +' + gotA + ' · ' + TEAMS[1] + ' +' + gotB));
+      }
       var why = r.kind === 'tie' ? 'The teams held equal pips, so nobody takes the round.'
         : r.kind === 'blocked' ? TEAMS[r.winningTeam] + ' held fewer pips and takes the round.'
         : TEAMS[r.winningTeam] + ' takes the round.';
