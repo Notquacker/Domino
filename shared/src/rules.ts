@@ -56,15 +56,46 @@ export type Move =
   | { readonly kind: 'play'; readonly tile: TileId; readonly end: End }
   | { readonly kind: 'pass' };
 
+/**
+ * How a match is scored.
+ *
+ * 'rounds' — winning a round is worth one point, and the match runs to a
+ * target that must be reached by a margin (first to 7, win by 2). This is the
+ * table default.
+ *
+ * 'pips' — the winning team scores the pips left in the losing hands, and the
+ * match runs to 100/150/200. No margin applies.
+ */
+export type ScoringMode = 'rounds' | 'pips';
+
 export interface HouseRules {
+  readonly scoring: ScoringMode;
   /** Match runs until a team reaches this many points. */
   readonly targetScore: number;
+  /**
+   * The winner must also lead by this much. 2 makes 7-6 no win; 1 means
+   * reaching the target is enough.
+   */
+  readonly winBy: number;
   /** First round of a match is opened by whoever holds the 6-6, who must play it. */
   readonly mustOpenDoubleSix: boolean;
   /**
+   * When true a player may only pass with nothing playable — the engine
+   * refuses any other pass. When false (the default) passing is a choice, and
+   * a pass made while holding a playable tile is punished at the end of the
+   * round instead.
+   */
+  readonly strictPassing: boolean;
+  /**
+   * Points awarded to the opposing team for each pass a player made while
+   * actually holding a playable tile, counted once hands are revealed. Zero
+   * disables the penalty.
+   */
+  readonly falsePassPenalty: number;
+  /**
    * When false (the common rule) a winning team scores only the pips left in
    * the two opponents' hands. When true, every unplayed tile on the table
-   * counts, including the winner's partner's.
+   * counts, including the winner's partner's. Only applies to 'pips' scoring.
    */
   readonly countAllRemaining: boolean;
   /**
@@ -75,11 +106,30 @@ export interface HouseRules {
 }
 
 export const DEFAULT_RULES: HouseRules = {
-  targetScore: 150,
+  scoring: 'rounds',
+  targetScore: 7,
+  winBy: 2,
   mustOpenDoubleSix: true,
+  strictPassing: false,
+  falsePassPenalty: 1,
   countAllRemaining: false,
   capicuBonus: 0,
 };
+
+/** Sensible defaults for the older pip-counting game. */
+export const PIP_RULES: HouseRules = {
+  ...DEFAULT_RULES,
+  scoring: 'pips',
+  targetScore: 150,
+  winBy: 1,
+};
+
+/** A pass, recorded so it can be judged once every hand is face up. */
+export interface PassRecord {
+  readonly seat: Seat;
+  /** True if the player held a tile that would have fitted an open end. */
+  readonly couldHavePlayed: boolean;
+}
 
 export interface RoundState {
   /** Hands by seat. Server-only — never serialised to a client. */
@@ -91,12 +141,21 @@ export interface RoundState {
   readonly starter: Seat;
   /** Forces the opening tile (the 6-6) on the first round of a match. */
   readonly requireTile: TileId | null;
+  /** Every pass this round, judged at the moment it was made. */
+  readonly passLog: readonly PassRecord[];
 }
 
 export interface RoundResult {
   readonly kind: 'domino' | 'blocked' | 'tie';
   readonly winningTeam: Team | null;
+  /** Total points this round moved to each team, penalties included. */
   readonly points: number;
+  /** Points each team gained, by team index — the authoritative breakdown. */
+  readonly awarded: readonly [number, number];
+  /** Passes made while holding a playable tile, by the player who made them. */
+  readonly falsePasses: readonly PassRecord[];
+  /** Penalty points each team received for the other's false passes. */
+  readonly penalties: readonly [number, number];
   /** Seat that emptied its hand, if the round ended that way. */
   readonly dominoedBy: Seat | null;
   readonly capicu: boolean;
@@ -174,7 +233,11 @@ export function fits(board: readonly BoardTile[], id: TileId, end: End): boolean
  * Every move the seated player may legally make right now. A pass is offered
  * only when no tile in hand fits either end — passing is never voluntary.
  */
-export function legalMoves(round: RoundState, seat: Seat): readonly Move[] {
+export function legalMoves(
+  round: RoundState,
+  seat: Seat,
+  strict = true,
+): readonly Move[] {
   if (round.turn !== seat) return [];
   const hand = handOf(round, seat);
   const ends = openEnds(round.board);
@@ -190,11 +253,26 @@ export function legalMoves(round: RoundState, seat: Seat): readonly Move[] {
     if (fits(round.board, id, 'left')) moves.push({ kind: 'play', tile: id, end: 'left' });
     if (fits(round.board, id, 'right')) moves.push({ kind: 'play', tile: id, end: 'right' });
   }
-  return moves.length > 0 ? moves : [{ kind: 'pass' }];
+  if (moves.length === 0 || !strict) moves.push({ kind: 'pass' });
+  return moves;
 }
 
-export function isLegal(round: RoundState, seat: Seat, move: Move): boolean {
-  return legalMoves(round, seat).some(
+/** Does this seat hold anything that would fit an open end right now? */
+export function hasPlayable(round: RoundState, seat: Seat): boolean {
+  const ends = openEnds(round.board);
+  if (ends === null) return handOf(round, seat).length > 0;
+  return handOf(round, seat).some(
+    (id) => fits(round.board, id, 'left') || fits(round.board, id, 'right'),
+  );
+}
+
+export function isLegal(
+  round: RoundState,
+  seat: Seat,
+  move: Move,
+  strict = true,
+): boolean {
+  return legalMoves(round, seat, strict).some(
     (m) =>
       m.kind === move.kind &&
       (m.kind !== 'play' || move.kind !== 'play' || (m.tile === move.tile && m.end === move.end)),
@@ -241,6 +319,7 @@ export function dealRound(
     passes: 0,
     starter: turn,
     requireTile,
+    passLog: [],
   };
 }
 
@@ -336,15 +415,24 @@ export function applyMove(match: MatchState, seat: Seat, move: Move): MoveOutcom
   if (round.turn !== seat) {
     throw new RuleError('not your turn');
   }
-  if (!isLegal(round, seat, move)) {
+  const strict = match.rules.strictPassing;
+  if (!isLegal(round, seat, move, strict)) {
     throw new RuleError(
       move.kind === 'pass' ? 'you have a playable tile, so you must play' : 'illegal move',
     );
   }
 
   if (move.kind === 'pass') {
+    // Judged now, while the board still looks the way it did when they chose
+    // to pass. Whether it costs them is settled once hands are revealed.
+    const couldHavePlayed = hasPlayable(round, seat);
     const passes = round.passes + 1;
-    const passed: RoundState = { ...round, passes, turn: nextSeat(round.turn) };
+    const passed: RoundState = {
+      ...round,
+      passes,
+      turn: nextSeat(round.turn),
+      passLog: [...round.passLog, { seat, couldHavePlayed }],
+    };
     if (passes >= 4) {
       return finishRound(match, passed, null, false);
     }
@@ -380,7 +468,8 @@ export function applyMove(match: MatchState, seat: Seat, move: Move): MoveOutcom
     return finishRound(match, played, seat, bothEnds);
   }
 
-  // All four hands blocked immediately after a play is also a dead round.
+  // Everyone genuinely stuck right after a play is a dead round. Voluntary
+  // passes do not count here — only hands that truly cannot follow.
   if (SEATS.every((s) => legalMovesWouldPass(played, s))) {
     return finishRound(match, played, null, false);
   }
@@ -428,49 +517,98 @@ function finishRound(
     }
   }
 
-  const base = winningTeam === null ? 0 : scoreFor(rules, remaining, winningTeam);
-  const bonus = capicu && winningTeam !== null ? rules.capicuBonus : 0;
-  const points = base + bonus;
+  const awarded: [number, number] = [0, 0];
+
+  // What winning the round itself is worth.
+  if (winningTeam !== null) {
+    const bonus = capicu ? rules.capicuBonus : 0;
+    awarded[winningTeam] +=
+      rules.scoring === 'rounds' ? 1 + bonus : scoreFor(rules, remaining, winningTeam) + bonus;
+  }
+
+  // Now the hands are face up, so every pass can be judged. Passing on a
+  // playable tile hands the other team a point, win or lose.
+  const falsePasses = round.passLog.filter((p) => p.couldHavePlayed);
+  const penalties: [number, number] = [0, 0];
+  if (rules.falsePassPenalty > 0) {
+    for (const pass of falsePasses) {
+      const opponents = (1 - teamOf(pass.seat)) as Team;
+      penalties[opponents] += rules.falsePassPenalty;
+      awarded[opponents] += rules.falsePassPenalty;
+    }
+  }
 
   const nextStarter = nextStarterFor(round, remaining, { kind, winningTeam, dominoedBy });
 
-  const scores: [number, number] = [match.scores[0], match.scores[1]];
-  if (winningTeam !== null) scores[winningTeam] += points;
+  const scores: [number, number] = [match.scores[0] + awarded[0], match.scores[1] + awarded[1]];
 
   const result: RoundResult = {
     kind,
     winningTeam,
-    points,
+    points: awarded[0] + awarded[1],
+    awarded,
+    falsePasses,
+    penalties,
     dominoedBy,
-    capicu: capicu && bonus > 0,
+    capicu: capicu && rules.capicuBonus > 0,
     remaining,
     nextStarter,
   };
 
-  const reachedTarget = winningTeam !== null && scores[winningTeam] >= rules.targetScore;
+  const champion = matchWinner(rules, scores);
 
   return {
     match: {
       ...match,
       round,
       scores,
-      phase: reachedTarget ? 'matchOver' : 'roundOver',
+      phase: champion !== null ? 'matchOver' : 'roundOver',
       lastResult: result,
-      winner: reachedTarget ? winningTeam : null,
+      winner: champion,
     },
     result,
     note: describeResult(result),
   };
 }
 
+/**
+ * Who, if anyone, has won the match. A team must both reach the target and
+ * lead by the required margin, so with "first to 7, win by 2" a 7-6 score
+ * keeps the match alive.
+ */
+export function matchWinner(
+  rules: HouseRules,
+  scores: readonly [number, number],
+): Team | null {
+  const margin = Math.max(1, rules.winBy);
+  const [a, b] = scores;
+  if (a >= rules.targetScore && a - b >= margin) return 0;
+  if (b >= rules.targetScore && b - a >= margin) return 1;
+  return null;
+}
+
 export function describeResult(r: RoundResult): string {
-  if (r.kind === 'tie') return 'Round blocked with the teams level — no points, re-deal.';
-  const team = r.winningTeam === 0 ? 'Team A' : 'Team B';
-  if (r.kind === 'domino') {
-    const capicu = r.capicu ? ' with a capicu' : '';
-    return `Seat ${r.dominoedBy} domino'd${capicu} — ${team} scores ${r.points}.`;
+  const parts: string[] = [];
+  if (r.kind === 'tie') {
+    parts.push('Round blocked with the teams level — no points for the round.');
+  } else {
+    const team = r.winningTeam === 0 ? 'Team A' : 'Team B';
+    const won = r.winningTeam === null ? 0 : r.awarded[r.winningTeam] - r.penalties[r.winningTeam];
+    if (r.kind === 'domino') {
+      const capicu = r.capicu ? ' with a capicu' : '';
+      parts.push(`Seat ${r.dominoedBy} went out${capicu} — ${team} takes the round (+${won}).`);
+    } else {
+      parts.push(`Round blocked — ${team} had fewer pips and takes the round (+${won}).`);
+    }
   }
-  return `Round blocked — ${team} had fewer pips and scores ${r.points}.`;
+  if (r.falsePasses.length > 0) {
+    const who = r.falsePasses.map((p) => `seat ${p.seat}`).join(', ');
+    parts.push(
+      `Passed holding a playable tile: ${who}. ` +
+        `Penalty — Team A +${r.penalties[0]}, Team B +${r.penalties[1]}.`,
+    );
+  }
+  return parts.join(' ');
 }
 
 /** Start the next round after a completed one. */

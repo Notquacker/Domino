@@ -42,10 +42,13 @@ function tile(a: number, b: number, vertical: boolean, extra: string): HTMLEleme
   return node;
 }
 
-/** A tile as it sits on the table — doubles turned across the chain. */
-export function boardTile(placed: BoardTile): HTMLElement {
+/**
+ * A tile as it sits on the table — doubles turned across the chain. `fresh`
+ * marks the tile that was just played so it can land rather than appear.
+ */
+export function boardTile(placed: BoardTile, fresh = false): HTMLElement {
   const isDouble = placed.left === placed.right;
-  const node = tile(placed.left, placed.right, isDouble, 'board');
+  const node = tile(placed.left, placed.right, isDouble, `board${fresh ? ' fresh' : ''}`);
   node.dataset['tile'] = placed.id;
   node.setAttribute('aria-label', `${placed.left} ${placed.right}`);
   return node;

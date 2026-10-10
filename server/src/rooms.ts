@@ -15,9 +15,11 @@ import {
   type Move,
   type PlayerView,
   type RoundResult,
+  type ScoringMode,
   type Seat,
   type SeatInfo,
   DEFAULT_RULES,
+  PIP_RULES,
   PROTOCOL_VERSION,
   RuleError,
   SEATS,
@@ -72,23 +74,43 @@ export function sanitizeChat(raw: unknown): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, MAX_CHAT);
 }
 
+function clampInt(value: unknown, lo: number, hi: number, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= lo && n <= hi ? Math.floor(n) : fallback;
+}
+
+function bool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+/**
+ * Build a trusted rule set from whatever the client asked for. Anything
+ * missing or out of range falls back to the default rather than being
+ * rejected, so an old or odd client cannot wedge table creation.
+ */
 function mergeRules(partial: Partial<HouseRules> | undefined): HouseRules {
   if (!partial) return DEFAULT_RULES;
-  const target = [100, 150, 200].includes(Number(partial.targetScore))
-    ? Number(partial.targetScore)
-    : DEFAULT_RULES.targetScore;
-  const bonus = Number(partial.capicuBonus);
+
+  const scoring: ScoringMode = partial.scoring === 'pips' ? 'pips' : 'rounds';
+  const base = scoring === 'pips' ? PIP_RULES : DEFAULT_RULES;
+
+  // Round scoring runs to a small number; pip scoring to a big one.
+  const target =
+    scoring === 'pips'
+      ? [100, 150, 200].includes(Number(partial.targetScore))
+        ? Number(partial.targetScore)
+        : base.targetScore
+      : clampInt(partial.targetScore, 1, 21, base.targetScore);
+
   return {
+    scoring,
     targetScore: target,
-    mustOpenDoubleSix:
-      typeof partial.mustOpenDoubleSix === 'boolean'
-        ? partial.mustOpenDoubleSix
-        : DEFAULT_RULES.mustOpenDoubleSix,
-    countAllRemaining:
-      typeof partial.countAllRemaining === 'boolean'
-        ? partial.countAllRemaining
-        : DEFAULT_RULES.countAllRemaining,
-    capicuBonus: Number.isFinite(bonus) && bonus >= 0 && bonus <= 50 ? Math.floor(bonus) : 0,
+    winBy: clampInt(partial.winBy, 1, 5, base.winBy),
+    mustOpenDoubleSix: bool(partial.mustOpenDoubleSix, base.mustOpenDoubleSix),
+    strictPassing: bool(partial.strictPassing, base.strictPassing),
+    falsePassPenalty: clampInt(partial.falsePassPenalty, 0, 10, base.falsePassPenalty),
+    countAllRemaining: bool(partial.countAllRemaining, base.countAllRemaining),
+    capicuBonus: clampInt(partial.capicuBonus, 0, 50, base.capicuBonus),
   };
 }
 
@@ -368,7 +390,8 @@ export class Room {
     });
 
     const hand = seat !== null && round !== null ? (round.hands[seat] ?? []) : [];
-    const canAct = seat !== null && round !== null && match?.phase === 'playing';
+    const canAct =
+      seat !== null && round !== null && match?.phase === 'playing' && round.turn === seat;
 
     let spectators = 0;
     for (const p of this.players.values()) if (p.seat === null) spectators++;
@@ -387,7 +410,7 @@ export class Room {
       turn: match?.phase === 'playing' ? (round?.turn ?? null) : null,
       scores: match?.scores ?? [0, 0],
       roundNumber: match?.roundNumber ?? 0,
-      legal: canAct ? legalMoves(round, seat) : [],
+      youMayMove: canAct,
       lastResult: match?.lastResult ?? null,
       winner: match?.winner ?? null,
       log: this.log,

@@ -354,3 +354,77 @@ input::placeholder { color: var(--muted); }
 }
 .stat b { display: block; font-size: 22px; color: var(--gold); }
 .stat span { font-size: 11.5px; color: var(--muted); }
+
+/* ---------------- effects & hint-free play ---------------- */
+
+/* Every tile in hand looks the same now: nothing tells you what fits. */
+.tile.inhand.playable { opacity: 1; filter: none; }
+.tile.inhand.waiting { cursor: default; opacity: 0.75; }
+
+/* A tile the server just refused. */
+@keyframes refuse {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px) rotate(-2deg); }
+  40% { transform: translateX(5px) rotate(2deg); }
+  60% { transform: translateX(-4px) rotate(-1deg); }
+  80% { transform: translateX(3px); }
+}
+.tile.inhand.refused {
+  animation: refuse 0.42s ease;
+  box-shadow: 0 0 0 2px var(--bad), 0 4px 10px #0008;
+}
+
+/* The tile that just landed on the chain. */
+@keyframes drop {
+  from { transform: translateY(-22px) scale(1.1); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+.tile.board.fresh { animation: drop 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+
+/* An end is only tappable once a tile is chosen — and never says if it fits. */
+.endslot.armed {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: #e0b25218;
+  cursor: pointer;
+}
+.endslot:disabled { cursor: default; }
+
+.iconbtn {
+  background: transparent;
+  border: 1px solid #ffffff2b;
+  color: var(--text);
+  padding: 5px 9px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Who got caught passing on a playable tile. */
+.penaltybox {
+  margin: 14px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid #e2685f55;
+  background: #e2685f1a;
+  border-radius: 10px;
+  text-align: left;
+}
+.penaltybox h3 {
+  margin: 0 0 7px;
+  font-size: 11.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--danger);
+}
+.penaltybox div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13.5px;
+  padding: 2px 0;
+}
+.penaltybox .cost { color: var(--danger); font-weight: 700; white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tile.board.fresh, .tile.inhand.refused { animation: none; }
+}

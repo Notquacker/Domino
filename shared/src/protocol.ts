@@ -7,6 +7,7 @@
  */
 
 import type { BoardTile, HouseRules, Move, Phase, RoundResult, Seat, Team } from './rules.js';
+export type { Move };
 import type { Pip, TileId } from './tiles.js';
 
 export const PROTOCOL_VERSION = 1;
@@ -36,8 +37,12 @@ export interface PlayerView {
   readonly turn: Seat | null;
   readonly scores: readonly [number, number];
   readonly roundNumber: number;
-  /** Moves you may make right now; empty when it is not your turn. */
-  readonly legal: readonly Move[];
+  /**
+   * Whether it is your turn to act. Deliberately NOT a list of legal moves:
+   * working out what you can play is part of the game, so the server does not
+   * hand it over. Attempt a move and it is accepted or refused.
+   */
+  readonly youMayMove: boolean;
   readonly lastResult: RoundResult | null;
   readonly winner: Team | null;
   readonly log: readonly string[];

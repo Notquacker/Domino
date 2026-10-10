@@ -2,8 +2,10 @@
  * Domino client.
  *
  * Holds no game rules of its own: it renders whatever `PlayerView` the server
- * sends and offers only the moves the server listed as legal. Every action is
- * re-validated server-side, so a tampered client can cheat nobody.
+ * sends. It is deliberately not told which moves are legal — spotting what you
+ * can play is part of the game — so it offers every tile and lets the server
+ * accept or refuse. Every action is validated server-side regardless, so a
+ * tampered client can cheat nobody.
  */
 
 import type { End, HouseRules, PlayerView, Seat, ServerMessage, TileId } from '@domino/shared';
@@ -80,9 +82,53 @@ let accountState: 'pending' | 'ready' | 'unavailable' = 'pending';
 /** Reset on every connect: the token must be presented once per socket. */
 let authSent = false;
 let connectAttempts = 0;
+/** The move awaiting the server's verdict, so a refusal can point at it. */
+let pending: { tile: TileId; end: End } | null = null;
+/** Tile to shake because the server just refused it. */
+let rejected: TileId | null = null;
+let muted = recall('domino.muted') === '1';
 let claimNotice = '';
 
 let lastPhase: string | null = null;
+
+/**
+ * Small synthesised blips. No audio files to ship, and nothing plays until
+ * the viewer has interacted, which browsers require anyway.
+ */
+let audio: AudioContext | null = null;
+function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win'): void {
+  if (muted) return;
+  try {
+    const Ctor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return;
+    audio ??= new Ctor();
+    if (audio.state === 'suspended') void audio.resume();
+
+    const notes: Record<typeof kind, [number, number, OscillatorType]> = {
+      place: [220, 0.07, 'triangle'],
+      pass: [150, 0.1, 'sine'],
+      wrong: [90, 0.18, 'sawtooth'],
+      round: [440, 0.16, 'triangle'],
+      win: [660, 0.3, 'triangle'],
+    };
+    const [freq, dur, type] = notes[kind];
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audio.currentTime);
+    if (kind === 'win') osc.frequency.exponentialRampToValueAtTime(freq * 2, audio.currentTime + dur);
+    gain.gain.setValueAtTime(0.0001, audio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.18, audio.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + dur);
+    osc.connect(gain).connect(audio.destination);
+    osc.start();
+    osc.stop(audio.currentTime + dur + 0.02);
+  } catch {
+    /* audio is a nicety; never let it break a turn */
+  }
+}
 
 const net = new Net(onMessage, onStatus, onReady);
 
@@ -153,6 +199,8 @@ function onMessage(msg: ServerMessage): void {
       view = msg.view;
       break;
     case 'state':
+      // Our move landed, so there is nothing outstanding to blame a refusal on.
+      pending = null;
       view = msg.view;
       break;
     case 'chat':
@@ -160,7 +208,19 @@ function onMessage(msg: ServerMessage): void {
       if (chats.length > 40) chats = chats.slice(-40);
       break;
     case 'error':
-      error = msg.message;
+      // Refusing a placement is normal here: you guessed, it did not fit.
+      if (pending !== null && /does not match|illegal move|not your turn/i.test(msg.message)) {
+        rejected = pending.tile;
+        error = 'That tile does not fit there.';
+        sfx('wrong');
+        window.setTimeout(() => {
+          rejected = null;
+          render();
+        }, 600);
+      } else {
+        error = msg.message;
+      }
+      pending = null;
       // A dead token would otherwise loop on every reconnect.
       if (/no longer available|no table/i.test(msg.message)) {
         forget();
@@ -174,9 +234,13 @@ function onMessage(msg: ServerMessage): void {
     case 'pong':
       return;
   }
-  // A finished match has just been written server-side, so the record moved.
-  if (msg.t === 'state' && msg.view.phase === 'matchOver' && lastPhase !== 'matchOver') {
-    void refreshAccount();
+  if (msg.t === 'state' && msg.view.phase !== lastPhase) {
+    if (msg.view.phase === 'matchOver') {
+      sfx('win');
+      void refreshAccount();
+    } else if (msg.view.phase === 'roundOver') {
+      sfx('round');
+    }
   }
   lastPhase = view?.phase ?? null;
   render();
@@ -186,35 +250,29 @@ function onMessage(msg: ServerMessage): void {
 // Derived helpers
 // ---------------------------------------------------------------------------
 
-function endsFor(tile: TileId): End[] {
-  const out: End[] = [];
-  for (const move of view?.legal ?? []) {
-    if (move.kind === 'play' && move.tile === tile) out.push(move.end);
-  }
-  return out;
-}
-
-function playableTiles(): Set<TileId> {
-  const set = new Set<TileId>();
-  for (const move of view?.legal ?? []) if (move.kind === 'play') set.add(move.tile);
-  return set;
-}
-
-function canPass(): boolean {
-  return (view?.legal ?? []).some((m) => m.kind === 'pass');
-}
-
 function myTurn(): boolean {
-  return view !== null && view.you !== null && view.turn === view.you;
+  return view?.youMayMove === true;
 }
 
 function teamClass(seat: Seat): string {
   return teamOf(seat) === 0 ? 'teamA' : 'teamB';
 }
 
+/**
+ * Attempt a placement. The server decides whether it fits — the page is not
+ * told in advance, because working that out is part of the game.
+ */
 function play(tile: TileId, end: End): void {
+  pending = { tile, end };
   selected = null;
+  sfx('place');
   net.send({ t: 'move', move: { kind: 'play', tile, end } });
+}
+
+function pass(): void {
+  selected = null;
+  sfx('pass');
+  net.send({ t: 'move', move: { kind: 'pass' } });
 }
 
 // ---------------------------------------------------------------------------
@@ -332,37 +390,95 @@ function renderLanding(): HTMLElement {
 
   const rulesBox = el('div', 'rules');
 
+  // How the match is scored. Round-by-round is the house default.
+  const modeLabel = el('label');
+  modeLabel.appendChild(el('span', 'grow', 'Scoring'));
+  const mode = document.createElement('select');
+  mode.id = 'scoring';
+  for (const [value, text] of [
+    ['rounds', 'Rounds won'],
+    ['pips', 'Count pips'],
+  ] as const) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    if (value === 'rounds') option.selected = true;
+    mode.appendChild(option);
+  }
+  modeLabel.appendChild(mode);
+  rulesBox.appendChild(modeLabel);
+
   const targetLabel = el('label');
   targetLabel.appendChild(el('span', 'grow', 'Play to'));
   const target = document.createElement('select');
-  for (const value of [100, 150, 200]) {
-    const option = document.createElement('option');
-    option.value = String(value);
-    option.textContent = `${value} points`;
-    if (value === 150) option.selected = true;
-    target.appendChild(option);
-  }
+  target.id = 'target';
+  const fillTargets = (): void => {
+    target.replaceChildren();
+    const values = mode.value === 'pips' ? [100, 150, 200] : [5, 7, 9, 11];
+    const preferred = mode.value === 'pips' ? 150 : 7;
+    for (const value of values) {
+      const option = document.createElement('option');
+      option.value = String(value);
+      option.textContent = mode.value === 'pips' ? `${value} points` : `${value} rounds`;
+      if (value === preferred) option.selected = true;
+      target.appendChild(option);
+    }
+  };
+  fillTargets();
   targetLabel.appendChild(target);
   rulesBox.appendChild(targetLabel);
+
+  const winByRow = el('label');
+  const winByBox = el('input') as HTMLInputElement;
+  winByBox.type = 'checkbox';
+  winByBox.id = 'winby';
+  winByBox.checked = true;
+  winByBox.style.width = 'auto';
+  winByRow.appendChild(winByBox);
+  winByRow.appendChild(el('span', 'grow', 'Must win by 2'));
+  rulesBox.appendChild(winByRow);
+
+  const penaltyRow = el('label');
+  const penaltyBox = el('input') as HTMLInputElement;
+  penaltyBox.type = 'checkbox';
+  penaltyBox.id = 'falsepass';
+  penaltyBox.checked = true;
+  penaltyBox.style.width = 'auto';
+  penaltyRow.appendChild(penaltyBox);
+  penaltyRow.appendChild(el('span', 'grow', 'Point against a false pass'));
+  rulesBox.appendChild(penaltyRow);
+  rulesBox.appendChild(
+    el('p', 'note', 'Passing is always allowed. Pass holding a tile you could have played and, once hands are shown, the other team scores.'),
+  );
 
   const capicu = el('label');
   const capicuBox = el('input') as HTMLInputElement;
   capicuBox.type = 'checkbox';
+  capicuBox.id = 'capicu';
   capicuBox.style.width = 'auto';
   capicu.appendChild(capicuBox);
-  capicu.appendChild(el('span', undefined, 'Capicú bonus (+25)'));
+  capicu.appendChild(el('span', 'grow', 'Capicú bonus'));
   rulesBox.appendChild(capicu);
 
   const countAll = el('label');
   const countAllBox = el('input') as HTMLInputElement;
   countAllBox.type = 'checkbox';
+  countAllBox.id = 'countall';
   countAllBox.style.width = 'auto';
   countAll.appendChild(countAllBox);
-  countAll.appendChild(el('span', undefined, 'Count every unplayed tile'));
+  countAll.appendChild(el('span', 'grow', 'Count every unplayed tile'));
   rulesBox.appendChild(countAll);
-  rulesBox.appendChild(
-    el('p', 'note', 'Off by default: the winning team scores only the opponents’ pips.'),
-  );
+
+  const toggleForMode = (): void => {
+    const pips = mode.value === 'pips';
+    countAll.hidden = !pips;
+    winByRow.hidden = pips;
+  };
+  toggleForMode();
+  mode.addEventListener('change', () => {
+    fillTargets();
+    toggleForMode();
+  });
 
   details.appendChild(rulesBox);
   createCard.appendChild(details);
@@ -372,11 +488,15 @@ function renderLanding(): HTMLElement {
   createBtn.style.marginTop = '12px';
   createBtn.addEventListener('click', () => {
     error = '';
+    const pips = mode.value === 'pips';
     intent = {
       kind: 'create',
       rules: {
+        scoring: pips ? 'pips' : 'rounds',
         targetScore: Number(target.value),
-        capicuBonus: capicuBox.checked ? 25 : 0,
+        winBy: !pips && winByBox.checked ? 2 : 1,
+        falsePassPenalty: penaltyBox.checked ? 1 : 0,
+        capicuBonus: capicuBox.checked ? (pips ? 25 : 1) : 0,
         countAllRemaining: countAllBox.checked,
       },
     };
@@ -454,7 +574,11 @@ function renderLobby(v: PlayerView): HTMLElement {
   const wrap = el('div', 'center');
   const brand = el('div', 'brand');
   brand.appendChild(el('h1', undefined, 'Domino'));
-  brand.appendChild(el('p', undefined, `Play to ${v.rules.targetScore} · two against two`));
+  const how =
+    v.rules.scoring === 'rounds'
+      ? `First to ${v.rules.targetScore} rounds${v.rules.winBy > 1 ? `, win by ${v.rules.winBy}` : ''}`
+      : `Play to ${v.rules.targetScore} points`;
+  brand.appendChild(el('p', undefined, `${how} · two against two`));
   wrap.appendChild(brand);
 
   if (error) wrap.appendChild(el('div', 'err', error));
@@ -548,8 +672,21 @@ function renderTopbar(v: PlayerView): HTMLElement {
   score.appendChild(a);
   score.appendChild(el('span', undefined, '–'));
   score.appendChild(b);
-  score.appendChild(el('span', undefined, ` to ${v.rules.targetScore}`));
+  score.appendChild(
+    el('span', undefined, ` to ${v.rules.targetScore}${v.rules.winBy > 1 ? ' by 2' : ''}`),
+  );
   bar.appendChild(score);
+
+  const sound = el('button', 'iconbtn', muted ? '🔇' : '🔊') as HTMLButtonElement;
+  sound.title = muted ? 'Sound off' : 'Sound on';
+  sound.setAttribute('aria-label', muted ? 'Turn sound on' : 'Turn sound off');
+  sound.addEventListener('click', () => {
+    muted = !muted;
+    remember('domino.muted', muted ? '1' : '0');
+    if (!muted) sfx('place');
+    render();
+  });
+  bar.appendChild(sound);
 
   const meta = el('div', 'meta');
   meta.appendChild(el('div', 'code', v.code));
@@ -580,13 +717,18 @@ function renderOpponents(v: PlayerView): HTMLElement {
   return wrap;
 }
 
+/**
+ * An open end you can aim at. It shows the pip value — public information —
+ * but never whether your selected tile would actually fit.
+ */
 function endSlot(v: PlayerView, end: End): HTMLElement {
   const pip = end === 'left' ? v.ends?.left : v.ends?.right;
-  const live = selected !== null && endsFor(selected).includes(end);
-  const slot = el('button', `endslot${live ? ' live' : ''}`, live ? '+' : String(pip ?? ''));
-  slot.setAttribute('aria-label', `Play on the ${end} end`);
+  const armed = selected !== null;
+  const slot = el('button', `endslot${armed ? ' armed' : ''}`, String(pip ?? '')) as HTMLButtonElement;
+  slot.setAttribute('aria-label', `Play your tile on the ${end} end, showing ${pip}`);
+  slot.disabled = !armed;
   slot.addEventListener('click', () => {
-    if (selected !== null && endsFor(selected).includes(end)) play(selected, end);
+    if (selected !== null) play(selected, end);
   });
   return slot;
 }
@@ -597,11 +739,23 @@ function renderTable(v: PlayerView): HTMLElement {
 
   if (v.board.length === 0) {
     chain.appendChild(
-      el('div', 'empty-table', myTurn() ? 'Your lead — pick a tile.' : 'Waiting for the opening tile…'),
+      el(
+        'div',
+        'empty-table',
+        myTurn() ? 'Your lead — tap a tile to lay it down.' : 'Waiting for the opening tile…',
+      ),
     );
   } else {
     if (myTurn()) chain.appendChild(endSlot(v, 'left'));
-    for (const placed of v.board) chain.appendChild(boardTile(placed));
+    const ids = v.board.map((b) => b.id);
+    // Whichever end grew is the tile that just landed.
+    const freshId =
+      ids.length > lastBoard.length
+        ? ids[0] === lastBoard[0]
+          ? ids[ids.length - 1]
+          : ids[0]
+        : null;
+    for (const placed of v.board) chain.appendChild(boardTile(placed, placed.id === freshId));
     if (myTurn()) chain.appendChild(endSlot(v, 'right'));
   }
 
@@ -630,8 +784,8 @@ function renderStatus(v: PlayerView): HTMLElement {
     return status;
   }
   if (myTurn()) {
-    const label = canPass() ? 'Your turn — nothing fits, you must pass.' : 'Your turn.';
-    status.appendChild(el('span', 'turnme', label));
+    // No hint about whether anything fits — that is the player's problem now.
+    status.appendChild(el('span', 'turnme', 'Your turn.'));
   } else {
     const who = v.turn === null ? null : v.seats[v.turn];
     status.appendChild(el('span', undefined, who ? `Waiting for ${who.name}…` : 'Waiting…'));
@@ -648,24 +802,26 @@ function renderStatus(v: PlayerView): HTMLElement {
 function renderHand(v: PlayerView): HTMLElement {
   const zone = el('div', 'handzone');
   const hand = el('div', 'hand');
-  const playable = playableTiles();
 
   if (v.hand.length === 0) {
     hand.appendChild(el('div', 'empty-table', v.you === null ? 'Spectating.' : 'Your hand is empty.'));
   }
 
   for (const id of v.hand) {
-    const state = selected === id ? 'sel' : playable.has(id) ? 'playable' : 'dead';
+    // Every tile is offered. Whether it fits is for you to work out.
+    const state = selected === id ? 'sel' : 'playable';
     const node = handTile(id, state);
-    if (state !== 'dead') {
+    if (rejected === id) node.classList.add('refused');
+    if (myTurn()) {
       const activate = (): void => {
-        const ends = endsFor(id);
-        if (ends.length === 0) return;
-        if (ends.length === 1) play(id, ends[0] as End);
-        else {
-          selected = selected === id ? null : id;
-          render();
+        // Opening lead: there is only one place a tile can go, so one tap
+        // puts it down. Nothing is revealed — the server still decides.
+        if (v.board.length === 0) {
+          play(id, 'right');
+          return;
         }
+        selected = selected === id ? null : id;
+        render();
       };
       node.addEventListener('click', activate);
       node.addEventListener('keydown', (ev) => {
@@ -675,25 +831,33 @@ function renderHand(v: PlayerView): HTMLElement {
           activate();
         }
       });
+    } else {
+      node.classList.add('waiting');
     }
     hand.appendChild(node);
   }
   zone.appendChild(hand);
 
   const bar = el('div', 'handbar');
-  if (myTurn() && canPass()) {
-    const pass = el('button', 'gold', 'Pass') as HTMLButtonElement;
-    pass.addEventListener('click', () => net.send({ t: 'move', move: { kind: 'pass' } }));
-    bar.appendChild(pass);
-  }
-  if (selected !== null) {
-    bar.appendChild(el('span', 'hint', 'Now tap an end of the chain.'));
-    const cancel = el('button', 'ghost small', 'Cancel') as HTMLButtonElement;
-    cancel.addEventListener('click', () => {
-      selected = null;
-      render();
-    });
-    bar.appendChild(cancel);
+  if (myTurn()) {
+    if (selected !== null) {
+      bar.appendChild(el('span', 'hint', 'Tap the end of the chain you want.'));
+      const cancel = el('button', 'ghost small', 'Cancel') as HTMLButtonElement;
+      cancel.addEventListener('click', () => {
+        selected = null;
+        render();
+      });
+      bar.appendChild(cancel);
+    } else {
+      bar.appendChild(
+        el('span', 'hint', v.board.length === 0 ? 'Tap a tile to lead.' : 'Pick a tile, then an end.'),
+      );
+    }
+    // Passing is always allowed — and always a risk, since passing on a tile
+    // you could have played costs your team a point once hands are shown.
+    const passBtn = el('button', 'ghost small', 'Pass') as HTMLButtonElement;
+    passBtn.addEventListener('click', pass);
+    bar.appendChild(passBtn);
   }
   if (bar.childNodes.length > 0) zone.appendChild(bar);
   return zone;
@@ -745,19 +909,36 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
   if (v.phase === 'matchOver' && v.winner !== null) {
     const mine = v.you !== null && teamOf(v.you) === v.winner;
     sheet.appendChild(el('h2', undefined, mine ? 'You win the match!' : 'Match over'));
-    sheet.appendChild(el('div', 'big', `${v.scores[0]} – ${v.scores[1]}`));
-    sheet.appendChild(el('p', undefined, `${TEAM_NAMES[v.winner]} reached ${v.rules.targetScore}.`));
+    sheet.appendChild(el('div', 'big num', `${v.scores[0]} – ${v.scores[1]}`));
+    sheet.appendChild(el('p', undefined, `${TEAM_NAMES[v.winner]} takes it.`));
   } else {
     sheet.appendChild(el('h2', undefined, 'Round over'));
     if (result !== null) {
-      sheet.appendChild(el('div', 'big', result.points > 0 ? `+${result.points}` : '0'));
+      const mineTeam = v.you === null ? null : teamOf(v.you);
+      const gained = mineTeam === null ? 0 : result.awarded[mineTeam];
+      sheet.appendChild(el('div', 'big num', gained > 0 ? `+${gained}` : '0'));
+
       const who =
         result.kind === 'tie'
-          ? 'Blocked and level — nobody scores.'
+          ? 'Blocked and level — no point for the round.'
           : result.kind === 'blocked'
-            ? `Blocked. ${TEAM_NAMES[result.winningTeam ?? 0]} had the fewer pips.`
+            ? `Blocked. ${TEAM_NAMES[result.winningTeam ?? 0]} had fewer pips and takes the round.`
             : `${v.seats[result.dominoedBy ?? 0]?.name ?? 'A player'} went out${result.capicu ? ' with a capicú!' : '.'}`;
       sheet.appendChild(el('p', undefined, who));
+
+      // Name anyone caught passing on a tile they could have played.
+      if (result.falsePasses.length > 0) {
+        const box = el('div', 'penaltybox');
+        box.appendChild(el('h3', undefined, 'Caught passing'));
+        for (const fp of result.falsePasses) {
+          const row = el('div');
+          const name = v.seats[fp.seat]?.name ?? `Seat ${fp.seat + 1}`;
+          row.appendChild(el('span', undefined, `${name} had a tile that fitted`));
+          row.appendChild(el('span', 'cost', `+1 ${TEAM_NAMES[(1 - teamOf(fp.seat)) as 0 | 1]}`));
+          box.appendChild(row);
+        }
+        sheet.appendChild(box);
+      }
 
       const breakdown = el('div', 'breakdown');
       for (const seat of [0, 1, 2, 3] as Seat[]) {
@@ -765,12 +946,15 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
         row.appendChild(
           el('span', 'k', `${v.seats[seat]?.name ?? `Seat ${seat + 1}`} (${TEAM_NAMES[teamOf(seat)]})`),
         );
-        row.appendChild(el('span', undefined, `${result.remaining[seat] ?? 0} pips left`));
+        row.appendChild(el('span', 'num', `${result.remaining[seat] ?? 0} pips left`));
         breakdown.appendChild(row);
       }
       sheet.appendChild(breakdown);
     }
-    sheet.appendChild(el('p', undefined, `Score: ${v.scores[0]} – ${v.scores[1]}`));
+    const need = v.rules.winBy > 1 ? `, win by ${v.rules.winBy}` : '';
+    sheet.appendChild(
+      el('p', undefined, `Match: ${v.scores[0]} – ${v.scores[1]} (first to ${v.rules.targetScore}${need})`),
+    );
   }
 
   const actions = el('div', 'actions');

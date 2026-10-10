@@ -11,6 +11,31 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { after, before, describe, it } from 'node:test';
 import { WebSocket } from 'ws';
 import type { ClientMessage, Move, PlayerView, ServerMessage, TileId } from '@domino/shared';
+import { parseTile } from '@domino/shared';
+
+/**
+ * Pick a move from nothing but this player's own view. The server no longer
+ * hands over a list of legal moves — working out what fits is the player's
+ * job — so the test does what a real client must do.
+ */
+function chooseMove(v: PlayerView): Move | null {
+  if (v.hand.length === 0) return null;
+  if (v.ends === null) {
+    // Opening lead. The first round demands the 6-6.
+    const opener = v.hand.includes('6-6') ? '6-6' : (v.hand[0] as TileId);
+    return { kind: 'play', tile: opener, end: 'right' };
+  }
+  for (const id of v.hand) {
+    const t = parseTile(id);
+    if (t.low === v.ends.left || t.high === v.ends.left) {
+      return { kind: 'play', tile: id, end: 'left' };
+    }
+    if (t.low === v.ends.right || t.high === v.ends.right) {
+      return { kind: 'play', tile: id, end: 'right' };
+    }
+  }
+  return { kind: 'pass' };
+}
 
 const PORT = 8231;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -131,7 +156,7 @@ describe('a full four-player match over the wire', () => {
     for (const client of clients) await client.open();
 
     const host = clients[0]!;
-    host.send({ t: 'create', name: 'Ana', rules: { targetScore: 100 } });
+    host.send({ t: 'create', name: 'Ana', rules: { scoring: 'rounds', targetScore: 3, winBy: 2 } });
     await host.until(() => host.view !== null, 'the table to open');
     const code = host.code;
     assert.match(code, /^[A-Z2-9]{4}$/);
@@ -154,7 +179,7 @@ describe('a full four-player match over the wire', () => {
   it('rejects a start before the table is full', async () => {
     const stray = new TestClient('stray');
     await stray.open();
-    stray.send({ t: 'create', name: 'Solo', rules: { targetScore: 100 } });
+    stray.send({ t: 'create', name: 'Solo', rules: { scoring: 'rounds', targetScore: 3 } });
     await stray.until(() => stray.view !== null, 'a table');
     stray.send({ t: 'start' });
     await stray.until(() => stray.errors.length > 0, 'a refusal');
@@ -175,11 +200,21 @@ describe('a full four-player match over the wire', () => {
     // The player on turn is the one holding the double six.
     const opener = clients.find((c) => c.view!.turn === c.view!.you)!;
     assert.ok(opener.view!.hand.includes('6-6'), 'the opener must hold the 6-6');
-    assert.deepEqual(
-      opener.view!.legal,
-      [{ kind: 'play', tile: '6-6', end: 'right' }],
-      'only the 6-6 may open',
+    assert.equal(opener.view!.youMayMove, true, 'the opener is on turn');
+
+    // The view must NOT carry a list of legal moves: that would be a hint.
+    assert.equal(
+      (opener.view as unknown as { legal?: unknown }).legal,
+      undefined,
+      'the server must not tell a player what they can play',
     );
+
+    // And the rule is still enforced: another tile is refused.
+    const other = opener.view!.hand.find((t) => t !== '6-6')!;
+    opener.errors = [];
+    opener.send({ t: 'move', move: { kind: 'play', tile: other, end: 'right' } });
+    await opener.until(() => opener.errors.length > 0, 'the opener to be refused');
+    assert.match(opener.errors[0]!, /illegal move/);
   });
 
   it('never sends a player another player’s tiles', () => {
@@ -269,13 +304,9 @@ describe('a full four-player match over the wire', () => {
           client.send({ t: 'nextRound' });
           return;
         }
-        if (v.phase === 'playing' && v.turn === v.you && v.legal.length > 0) {
-          const move = v.legal[0] as Move;
-          // Sanity: the server only ever offers tiles we actually hold.
-          if (move.kind === 'play') {
-            assert.ok(v.hand.includes(move.tile), 'offered a tile not in hand');
-          }
-          client.send({ t: 'move', move });
+        if (v.phase === 'playing' && v.turn === v.you) {
+          const move = chooseMove(v);
+          if (move !== null) client.send({ t: 'move', move });
         }
       };
 
@@ -296,10 +327,10 @@ describe('a full four-player match over the wire', () => {
     const final = clients[0]!.view!;
     assert.equal(final.phase, 'matchOver');
     assert.ok(final.winner === 0 || final.winner === 1);
-    assert.ok(
-      final.scores[final.winner!] >= 100,
-      `winner should have reached 100, had ${final.scores[final.winner!]}`,
-    );
+    const [a, b] = final.scores;
+    const lead = final.winner === 0 ? a - b : b - a;
+    assert.ok(Math.max(a, b) >= 3, `winner finished below the target at ${a}-${b}`);
+    assert.ok(lead >= 2, `won by only ${lead} at ${a}-${b}`);
     assert.ok(final.roundNumber >= 1);
     for (const client of clients) {
       assert.deepEqual(client.view!.scores, final.scores, 'all clients agree on the score');

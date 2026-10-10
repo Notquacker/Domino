@@ -8,6 +8,7 @@ import {
   type RoundState,
   type Seat,
   DEFAULT_RULES,
+  PIP_RULES,
   RuleError,
   SEATS,
   applyMove,
@@ -19,13 +20,15 @@ import {
   openEnds,
   parseTile,
   placeTile,
+  matchWinner,
   seededRng,
   startNextRound,
   teamOf,
   tilePips,
 } from '../dist/index.js';
 
-const rules = (over: Partial<HouseRules> = {}): HouseRules => ({ ...DEFAULT_RULES, ...over });
+const rules = (over: Partial<HouseRules> = {}): HouseRules => ({ ...PIP_RULES, ...over });
+const roundRules = (over: Partial<HouseRules> = {}): HouseRules => ({ ...DEFAULT_RULES, ...over });
 
 function round(over: Partial<RoundState> = {}): RoundState {
   return {
@@ -35,13 +38,14 @@ function round(over: Partial<RoundState> = {}): RoundState {
     passes: 0,
     starter: 0,
     requireTile: null,
+    passLog: [],
     ...over,
   };
 }
 
 function match(r: RoundState, over: Partial<MatchState> = {}): MatchState {
   return {
-    rules: DEFAULT_RULES,
+    rules: PIP_RULES,
     scores: [0, 0],
     roundNumber: 2,
     round: r,
@@ -174,13 +178,21 @@ describe('legal moves', () => {
     assert.ok(moves.some((m) => m.kind === 'play' && m.end === 'right'));
   });
 
-  it('offers a pass only when nothing in hand fits', () => {
+  it('offers a pass only when nothing fits, under strict passing', () => {
     const board = placeTile([], '0-0', 'right');
     const stuck = round({ hands: [['1-2', '3-4'], [], [], []], board });
-    assert.deepEqual(legalMoves(stuck, 0), [{ kind: 'pass' }]);
+    assert.deepEqual(legalMoves(stuck, 0, true), [{ kind: 'pass' }]);
 
     const playable = round({ hands: [['0-5'], [], [], []], board });
-    assert.ok(legalMoves(playable, 0).every((m) => m.kind === 'play'));
+    assert.ok(legalMoves(playable, 0, true).every((m) => m.kind === 'play'));
+  });
+
+  it('always offers a pass when passing is a choice', () => {
+    const board = placeTile([], '0-0', 'right');
+    const playable = round({ hands: [['0-5'], [], [], []], board });
+    const moves = legalMoves(playable, 0, false);
+    assert.ok(moves.some((m) => m.kind === 'pass'), 'a pass must be available');
+    assert.ok(moves.some((m) => m.kind === 'play'), 'and so must the playable tile');
   });
 });
 
@@ -190,9 +202,11 @@ describe('making moves', () => {
     assert.throws(() => applyMove(m, 1, { kind: 'play', tile: '0-2', end: 'right' }), RuleError);
   });
 
-  it('refuses to let a player pass when they can play', () => {
+  it('refuses to let a player pass when they can play, under strict passing', () => {
     const board = placeTile([], '0-0', 'right');
-    const m = match(round({ hands: [['0-5'], ['1-2'], ['1-3'], ['2-3']], board }));
+    const m = match(round({ hands: [['0-5'], ['1-2'], ['1-3'], ['2-3']], board }), {
+      rules: rules({ strictPassing: true }),
+    });
     assert.throws(
       () => applyMove(m, 0, { kind: 'pass' }),
       /must play/,
@@ -410,7 +424,7 @@ describe('full simulated matches', () => {
 
         const r = state.round!;
         const seat = r.turn;
-        const legal = legalMoves(r, seat);
+        const legal = legalMoves(r, seat, true);
         assert.ok(legal.length > 0, `seat ${seat} had no legal move at all`);
 
         // Tiles are conserved: nothing is created, duplicated or lost.
@@ -443,5 +457,293 @@ describe('full simulated matches', () => {
     assert.ok(dominoes > 0, 'no round ever ended by going out');
     assert.ok(blocks > 0, 'no round ever ended blocked');
     assert.ok(dominoes + blocks + ties > 200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Curacao house rules: voluntary passing, false-pass penalties, and a
+// match scored by rounds won to a target that must be reached by a margin.
+// ---------------------------------------------------------------------------
+
+describe('passing by choice', () => {
+  it('lets a player pass while holding a playable tile', () => {
+    const board = placeTile([], '0-0', 'right');
+    const m = match(round({ hands: [['0-5'], ['1-2'], ['1-3'], ['2-3']], board }), {
+      rules: roundRules(),
+    });
+    const after = applyMove(m, 0, { kind: 'pass' });
+    assert.equal(after.match.round!.turn, 1, 'play moves on');
+    assert.equal(after.match.round!.passLog.length, 1);
+  });
+
+  it('records whether the passer actually had something to play', () => {
+    const board = placeTile([], '0-0', 'right');
+
+    const bluffing = applyMove(
+      match(round({ hands: [['0-5'], ['1-2'], ['1-3'], ['2-3']], board }), { rules: roundRules() }),
+      0,
+      { kind: 'pass' },
+    );
+    assert.deepEqual(bluffing.match.round!.passLog[0], { seat: 0, couldHavePlayed: true });
+
+    const honest = applyMove(
+      match(round({ hands: [['1-5'], ['1-2'], ['1-3'], ['2-3']], board }), { rules: roundRules() }),
+      0,
+      { kind: 'pass' },
+    );
+    assert.deepEqual(honest.match.round!.passLog[0], { seat: 0, couldHavePlayed: false });
+  });
+
+  it('judges the pass against the board as it stood at the time', () => {
+    // Seat 0 cannot follow a 0 now. Later the ends change and their tile fits,
+    // but the pass was honest when it was made and must stay honest.
+    const board = placeTile([], '0-0', 'right');
+    let state = match(round({ hands: [['3-5'], ['0-3'], ['1-1'], ['2-2']], board }), {
+      rules: roundRules(),
+    });
+    state = applyMove(state, 0, { kind: 'pass' }).match;
+    state = applyMove(state, 1, { kind: 'play', tile: '0-3', end: 'right' }).match;
+    assert.equal(state.round!.passLog[0]!.couldHavePlayed, false, 'still an honest pass');
+  });
+});
+
+describe('punishing a false pass', () => {
+  /** Run a round to its end with the given hands and moves. */
+  function playOut(
+    hands: string[][],
+    board: ReturnType<typeof placeTile>,
+    moves: [Seat, Move][],
+    over: Partial<HouseRules> = {},
+  ) {
+    let state = match(round({ hands, board }), { rules: roundRules(over) });
+    let result = null;
+    for (const [seat, move] of moves) {
+      const out = applyMove(state, seat, move);
+      state = out.match;
+      result = out.result ?? result;
+    }
+    return { state, result };
+  }
+
+  it('gives the other team a point for passing on a playable tile', () => {
+    // Seat 1 can follow the 0 but passes; everyone else is genuinely stuck.
+    const board = placeTile([], '0-0', 'right');
+    const { state, result } = playOut(
+      [['1-2'], ['0-6'], ['3-4'], ['5-5']],
+      board,
+      [
+        [0, { kind: 'pass' }],
+        [1, { kind: 'pass' }],
+        [2, { kind: 'pass' }],
+        [3, { kind: 'pass' }],
+      ],
+    );
+
+    assert.ok(result, 'four passes end the round');
+    assert.equal(result!.falsePasses.length, 1);
+    assert.equal(result!.falsePasses[0]!.seat, 1);
+    // Seat 1 is Team B, so Team A collects the penalty.
+    assert.deepEqual(result!.penalties, [1, 0]);
+    assert.equal(state.scores[0] >= 1, true, 'Team A is up on the penalty');
+  });
+
+  it('charges a point for every false pass, not just the first', () => {
+    const board = placeTile([], '0-0', 'right');
+    // Seats 1 and 3 (both Team B) each pass holding a playable tile.
+    const { result } = playOut(
+      [['1-2'], ['0-6'], ['3-4'], ['0-5']],
+      board,
+      [
+        [0, { kind: 'pass' }],
+        [1, { kind: 'pass' }],
+        [2, { kind: 'pass' }],
+        [3, { kind: 'pass' }],
+      ],
+    );
+    assert.equal(result!.falsePasses.length, 2);
+    assert.deepEqual(result!.penalties, [2, 0], 'two points to Team A');
+  });
+
+  it('charges each team for its own false passes', () => {
+    const board = placeTile([], '0-0', 'right');
+    // Seat 0 (Team A) and seat 1 (Team B) both bluff.
+    const { result } = playOut(
+      [['0-2'], ['0-6'], ['3-4'], ['5-5']],
+      board,
+      [
+        [0, { kind: 'pass' }],
+        [1, { kind: 'pass' }],
+        [2, { kind: 'pass' }],
+        [3, { kind: 'pass' }],
+      ],
+    );
+    assert.equal(result!.falsePasses.length, 2);
+    assert.deepEqual(result!.penalties, [1, 1], 'one each, both ways');
+  });
+
+  it('charges nothing when every pass was honest', () => {
+    const board = placeTile([], '0-0', 'right');
+    const { result } = playOut(
+      [['1-2'], ['3-4'], ['5-6'], ['1-3']],
+      board,
+      [
+        [0, { kind: 'pass' }],
+        [1, { kind: 'pass' }],
+        [2, { kind: 'pass' }],
+        [3, { kind: 'pass' }],
+      ],
+    );
+    assert.equal(result!.falsePasses.length, 0);
+    assert.deepEqual(result!.penalties, [0, 0]);
+  });
+
+  it('still punishes the winning team for bluffing on the way', () => {
+    // Seat 0 passes holding a playable tile, then goes out next turn anyway.
+    const board = placeTile([], '3-3', 'right');
+    const { result } = playOut(
+      [['3-5'], ['6-6'], ['0-1'], ['4-4']],
+      board,
+      [
+        [0, { kind: 'pass' }],
+        [1, { kind: 'pass' }],
+        [2, { kind: 'pass' }],
+        [3, { kind: 'pass' }],
+      ],
+    );
+    // All four passed, so the round is blocked; seat 0's bluff still costs.
+    assert.equal(result!.falsePasses.some((p) => p.seat === 0), true);
+    assert.equal(result!.penalties[1], 1, 'Team B collects for seat 0');
+  });
+
+  it('can be switched off', () => {
+    const board = placeTile([], '0-0', 'right');
+    const { result } = playOut(
+      [['1-2'], ['0-6'], ['3-4'], ['5-5']],
+      board,
+      [
+        [0, { kind: 'pass' }],
+        [1, { kind: 'pass' }],
+        [2, { kind: 'pass' }],
+        [3, { kind: 'pass' }],
+      ],
+      { falsePassPenalty: 0 },
+    );
+    assert.equal(result!.falsePasses.length, 1, 'still reported');
+    assert.deepEqual(result!.penalties, [0, 0], 'but costs nothing');
+  });
+});
+
+describe('scoring by rounds won', () => {
+  it('pays one point for taking a round, whatever the pips', () => {
+    const board = placeTile([], '3-3', 'right');
+    const m = match(round({ hands: [['3-5'], ['6-6'], ['0-1'], ['4-4']], board }), {
+      rules: roundRules(),
+    });
+    const out = applyMove(m, 0, { kind: 'play', tile: '3-5', end: 'right' });
+    assert.equal(out.result!.points, 1, 'one point, not twenty pips');
+    assert.deepEqual(out.result!.awarded, [1, 0]);
+    assert.deepEqual(out.match.scores, [1, 0]);
+  });
+
+  it('still pays pips when the table is set that way', () => {
+    const board = placeTile([], '3-3', 'right');
+    const m = match(round({ hands: [['3-5'], ['6-6'], ['0-1'], ['4-4']], board }));
+    const out = applyMove(m, 0, { kind: 'play', tile: '3-5', end: 'right' });
+    assert.equal(out.result!.points, 20);
+  });
+});
+
+describe('first to seven, win by two', () => {
+  it('does not end the match at 7-6', () => {
+    assert.equal(matchWinner(DEFAULT_RULES, [7, 6]), null);
+    assert.equal(matchWinner(DEFAULT_RULES, [6, 7]), null);
+  });
+
+  it('ends it at 8-6', () => {
+    assert.equal(matchWinner(DEFAULT_RULES, [8, 6]), 0);
+    assert.equal(matchWinner(DEFAULT_RULES, [6, 8]), 1);
+  });
+
+  it('ends it at 7-5 and at 7-0', () => {
+    assert.equal(matchWinner(DEFAULT_RULES, [7, 5]), 0);
+    assert.equal(matchWinner(DEFAULT_RULES, [7, 0]), 0);
+  });
+
+  it('keeps going while the lead is only one, however high the score', () => {
+    assert.equal(matchWinner(DEFAULT_RULES, [11, 10]), null);
+    assert.equal(matchWinner(DEFAULT_RULES, [12, 10]), 0);
+  });
+
+  it('needs no margin when the table asks for none', () => {
+    assert.equal(matchWinner(roundRules({ winBy: 1 }), [7, 6]), 0);
+  });
+
+  it('plays a match out past the target when the teams stay level', () => {
+    // Drive rounds by hand so the scores are forced, not random.
+    const board = placeTile([], '3-3', 'right');
+    let state = match(round({ hands: [['3-5'], ['6-6'], ['0-1'], ['4-4']], board }), {
+      rules: roundRules(),
+      scores: [6, 6],
+    });
+    const out = applyMove(state, 0, { kind: 'play', tile: '3-5', end: 'right' });
+    assert.deepEqual(out.match.scores, [7, 6]);
+    assert.equal(out.match.phase, 'roundOver', '7-6 is not a win');
+    assert.equal(out.match.winner, null);
+  });
+
+  it('a false pass can carry a team over the line', () => {
+    const board = placeTile([], '0-0', 'right');
+    let state = match(round({ hands: [['1-2'], ['0-6'], ['3-4'], ['5-5']], board }), {
+      rules: roundRules(),
+      scores: [6, 0],
+    });
+    for (const seat of [0, 1, 2, 3] as Seat[]) {
+      state = applyMove(state, seat, { kind: 'pass' }).match;
+    }
+    // Team A takes the round on pips (1) and the penalty for seat 1's bluff (1).
+    assert.deepEqual(state.scores, [8, 0]);
+    assert.equal(state.phase, 'matchOver');
+    assert.equal(state.winner, 0);
+  });
+});
+
+describe('simulated matches under the house rules', () => {
+  it('terminates and respects the winning margin', () => {
+    for (let seed = 1; seed <= 120; seed++) {
+      const rng = seededRng(seed);
+      let state = newMatch(DEFAULT_RULES, rng);
+      let guard = 0;
+
+      while (state.phase !== 'matchOver') {
+        if (state.phase === 'roundOver') {
+          state = startNextRound(state, rng);
+          continue;
+        }
+        const r = state.round!;
+        // Play legally, but pass at random sometimes — bluffs included, which
+        // is what the penalty rule exists to handle.
+        const strictMoves = legalMoves(r, r.turn, true);
+        // Never on the opening lead: somebody has to put a tile down.
+        const bluff = r.board.length > 0 && rng() < 0.08;
+        const move: Move = bluff ? { kind: 'pass' } : (strictMoves[0] as Move);
+        state = applyMove(state, r.turn, move).match;
+        assert.ok(++guard < 20000, 'match failed to terminate');
+      }
+
+      const [a, b] = state.scores;
+      const winner = state.winner!;
+      const lead = winner === 0 ? a - b : b - a;
+      assert.ok(lead >= 2, `won by only ${lead} at ${a}-${b}`);
+      assert.ok(Math.max(a, b) >= 7, `winner finished below the target at ${a}-${b}`);
+    }
+  });
+});
+
+describe('the opening lead', () => {
+  it('cannot be passed — someone has to put a tile down', () => {
+    const m = match(round({ hands: [['0-1', '2-3'], ['1-2'], ['3-4'], ['5-5']], board: [] }), {
+      rules: roundRules(),
+    });
+    assert.throws(() => applyMove(m, 0, { kind: 'pass' }), RuleError);
   });
 });

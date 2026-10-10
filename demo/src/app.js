@@ -9,10 +9,20 @@
   var S = {
     screen: 'setup',
     names: ['Ana', 'Bo', 'Cyd', 'Dee'],
-    rules: { targetScore: 150, mustOpenDoubleSix: true, countAllRemaining: false, capicuBonus: 0 },
+    rules: {
+      scoring: 'rounds',
+      targetScore: 7,
+      winBy: 2,
+      mustOpenDoubleSix: true,
+      strictPassing: false,
+      falsePassPenalty: 1,
+      countAllRemaining: false,
+      capicuBonus: 0
+    },
     match: null,
     solo: false,
-    selected: null
+    selected: null,
+    refused: null
   };
 
   var root = document.getElementById('app');
@@ -42,7 +52,9 @@
     n.setAttribute('aria-label', a + ' ' + b);
     return n;
   }
-  function boardTile(p) { return tileNode(p.left, p.right, p.left === p.right, 'board'); }
+  function boardTile(p, fresh) {
+    return tileNode(p.left, p.right, p.left === p.right, 'board' + (fresh ? ' fresh' : ''));
+  }
   function handTile(id, state) {
     var t = D.parseTile(id), n = tileNode(t.low, t.high, true, 'inhand ' + state);
     if (state !== 'dead') { n.tabIndex = 0; n.setAttribute('role', 'button'); }
@@ -58,21 +70,7 @@
   /* ---------- derived ---------- */
   function round() { return S.match && S.match.round; }
   function turn() { var r = round(); return r ? r.turn : 0; }
-  function legal() {
-    var r = round();
-    if (!r || S.match.phase !== 'playing') return [];
-    return D.legalMoves(r, r.turn);
-  }
-  function endsFor(id) {
-    return legal().filter(function (m) { return m.kind === 'play' && m.tile === id; })
-                  .map(function (m) { return m.end; });
-  }
-  function playableSet() {
-    var s = {};
-    legal().forEach(function (m) { if (m.kind === 'play') s[m.tile] = 1; });
-    return s;
-  }
-  function canPass() { return legal().some(function (m) { return m.kind === 'pass'; }); }
+  function playing() { return S.match && S.match.phase === 'playing'; }
 
   /* ---------- actions ---------- */
   function afterMove() {
@@ -80,13 +78,31 @@
     if (S.match.phase === 'playing' && !S.solo) S.screen = 'handoff';
     render();
   }
+  /**
+   * Try a placement. Nothing told you whether it fits — that is the game — so
+   * a refusal is ordinary and just shakes the tile.
+   */
   function play(id, end) {
-    S.match = D.applyMove(S.match, turn(), { kind: 'play', tile: id, end: end }).match;
-    afterMove();
+    try {
+      S.match = D.applyMove(S.match, turn(), { kind: 'play', tile: id, end: end }).match;
+      afterMove();
+    } catch (e) {
+      S.refused = id;
+      S.selected = null;
+      render();
+      setTimeout(function () { S.refused = null; render(); }, 600);
+    }
   }
   function pass() {
-    S.match = D.applyMove(S.match, turn(), { kind: 'pass' }).match;
-    afterMove();
+    try {
+      S.match = D.applyMove(S.match, turn(), { kind: 'pass' }).match;
+      afterMove();
+    } catch (e) {
+      // Only happens on the opening lead, where somebody must put a tile down.
+      S.refused = 'pass';
+      render();
+      setTimeout(function () { S.refused = null; render(); }, 600);
+    }
   }
   function deal() {
     S.match = D.newMatch(S.rules, Math.random);
@@ -138,9 +154,9 @@
     r1.appendChild(el('span', 'grow', 'Play to'));
     var sel = document.createElement('select');
     sel.id = 'target';
-    [100, 150, 200].forEach(function (v) {
+    [5, 7, 9, 11].forEach(function (v) {
       var o = document.createElement('option');
-      o.value = String(v); o.textContent = v + ' points';
+      o.value = String(v); o.textContent = v + ' rounds';
       if (v === S.rules.targetScore) o.selected = true;
       sel.appendChild(o);
     });
@@ -161,8 +177,9 @@
       og.appendChild(row);
       return box;
     }
-    toggle('capicu', 'Capicú bonus (+25)', 'capicuBonus', 25);
-    toggle('countall', 'Count every unplayed tile', 'countAllRemaining');
+    toggle('winby', 'Must win by 2', 'winBy', 2);
+    toggle('falsepass', 'Point against a false pass', 'falsePassPenalty', 1);
+    toggle('capicu', 'Capicú bonus', 'capicuBonus', 1);
     toggle('double6', 'First round opens with the 6-6', 'mustOpenDoubleSix');
 
     var soloRow = el('label', 'optrow');
@@ -252,13 +269,12 @@
 
   function endSlot(end) {
     var ends = D.openEnds(round().board);
-    var live = S.selected && endsFor(S.selected).indexOf(end) >= 0;
+    var armed = !!S.selected;
     var pip = end === 'left' ? ends.left : ends.right;
-    var b = el('button', 'endslot' + (live ? ' live' : ''), live ? '+' : String(pip));
-    b.setAttribute('aria-label', 'Play on the ' + end + ' end, showing ' + pip);
-    b.addEventListener('click', function () {
-      if (S.selected && endsFor(S.selected).indexOf(end) >= 0) play(S.selected, end);
-    });
+    var b = el('button', 'endslot' + (armed ? ' armed' : ''), String(pip));
+    b.setAttribute('aria-label', 'Play your tile on the ' + end + ' end, showing ' + pip);
+    b.disabled = !armed;
+    b.addEventListener('click', function () { if (S.selected) play(S.selected, end); });
     return b;
   }
 
@@ -269,10 +285,15 @@
     var playing = S.match.phase === 'playing';
 
     if (!board.length) {
-      chain.appendChild(el('div', 'blank', playing ? 'Your lead — pick a tile.' : 'No tiles down yet.'));
+      chain.appendChild(el('div', 'blank', playing ? 'Your lead — tap a tile to lay it down.' : 'No tiles down yet.'));
     } else {
       if (playing) chain.appendChild(endSlot('left'));
-      board.forEach(function (p) { chain.appendChild(boardTile(p)); });
+      var ids0 = board.map(function (b) { return b.id; });
+      // Whichever end grew holds the tile that just landed.
+      var freshId = ids0.length > lastBoard.length
+        ? (ids0[0] === lastBoard[0] ? ids0[ids0.length - 1] : ids0[0])
+        : null;
+      board.forEach(function (p) { chain.appendChild(boardTile(p, p.id === freshId)); });
       if (playing) chain.appendChild(endSlot('right'));
     }
     box.appendChild(chain);
@@ -312,47 +333,49 @@
     var s = el('div', 'status');
     if (S.match.phase !== 'playing') return s;
     var name = S.names[turn()] || 'Seat ' + (turn() + 1);
-    s.appendChild(el('span', 'me', canPass() ? name + ' — nothing fits, you must pass.' : name + ' to play.'));
+    // No hint about whether anything fits — that is the player's problem.
+    s.appendChild(el('span', 'me', name + ' to play.'));
     return s;
   }
 
   function renderHand() {
     var zone = el('div', 'handzone');
     var hand = el('div', 'hand');
-    var ok = playableSet();
     var tiles = round().hands[turn()];
 
     if (!tiles.length) hand.appendChild(el('div', 'blank', 'Hand empty.'));
     tiles.forEach(function (id) {
-      var state = S.selected === id ? 'sel' : (ok[id] ? 'playable' : 'dead');
-      var node = handTile(id, state);
-      if (state !== 'dead') {
-        var act = function () {
-          var ends = endsFor(id);
-          if (!ends.length) return;
-          if (ends.length === 1) play(id, ends[0]);
-          else { S.selected = S.selected === id ? null : id; render(); }
-        };
-        node.addEventListener('click', act);
-        node.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); }
-        });
-      }
+      // Every tile looks the same: spotting what fits is the player's job.
+      var node = handTile(id, S.selected === id ? 'sel' : 'playable');
+      if (S.refused === id) node.className += ' refused';
+      var act = function () {
+        // Opening lead: only one place it can go, so one tap lays it down.
+        if (round().board.length === 0) { play(id, 'right'); return; }
+        S.selected = S.selected === id ? null : id;
+        render();
+      };
+      node.addEventListener('click', act);
+      node.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); }
+      });
       hand.appendChild(node);
     });
     zone.appendChild(hand);
 
     var bar = el('div', 'handbar');
-    if (S.match.phase === 'playing' && canPass()) {
-      var p = el('button', 'gold', 'Pass');
+    if (playing()) {
+      bar.appendChild(el('span', 'hint',
+        round().board.length === 0 ? 'Tap a tile to lead.'
+          : S.selected ? 'Tap the end you want.' : 'Pick a tile, then an end.'));
+      if (S.selected) {
+        var c = el('button', 'ghost small', 'Cancel');
+        c.addEventListener('click', function () { S.selected = null; render(); });
+        bar.appendChild(c);
+      }
+      var p = el('button', 'ghost small', 'Pass');
+      if (S.refused === 'pass') p.className += ' refused';
       p.addEventListener('click', pass);
       bar.appendChild(p);
-    }
-    if (S.selected) {
-      bar.appendChild(el('span', 'hint', 'Now tap an end of the chain.'));
-      var c = el('button', 'ghost small', 'Cancel');
-      c.addEventListener('click', function () { S.selected = null; render(); });
-      bar.appendChild(c);
     }
     if (bar.childNodes.length) zone.appendChild(bar);
     return zone;
@@ -376,10 +399,24 @@
         : r.kind === 'blocked' ? 'Blocked' : (S.names[r.dominoedBy] || 'A player') + ' went out';
       card.appendChild(el('h2', null, head + (r.capicu ? ' — capicú!' : '')));
       card.appendChild(el('div', 'big num', r.points > 0 ? '+' + r.points : '0'));
-      var why = r.kind === 'tie' ? 'The teams held equal pips, so nobody scores. Same opener deals again.'
+      var why = r.kind === 'tie' ? 'The teams held equal pips, so nobody takes the round.'
         : r.kind === 'blocked' ? TEAMS[r.winningTeam] + ' held fewer pips and takes the round.'
-        : TEAMS[r.winningTeam] + ' scores the pips left in the opponents’ hands.';
+        : TEAMS[r.winningTeam] + ' takes the round.';
       card.appendChild(el('p', null, why));
+
+      // Anyone who passed holding a tile that would have fitted.
+      if (r.falsePasses && r.falsePasses.length) {
+        var box = el('div', 'penaltybox');
+        box.appendChild(el('h3', null, 'Caught passing'));
+        r.falsePasses.forEach(function (fp) {
+          var row = el('div');
+          row.appendChild(el('span', null,
+            (S.names[fp.seat] || 'Seat ' + (fp.seat + 1)) + ' had a tile that fitted'));
+          row.appendChild(el('span', 'cost', '+1 ' + TEAMS[1 - D.teamOf(fp.seat)]));
+          box.appendChild(row);
+        });
+        card.appendChild(box);
+      }
 
       var led = el('div', 'ledger');
       [0, 1, 2, 3].forEach(function (seat) {
@@ -389,7 +426,9 @@
         led.appendChild(row);
       });
       card.appendChild(led);
-      card.appendChild(el('p', null, 'Match: ' + S.match.scores[0] + ' – ' + S.match.scores[1] + ' to ' + S.rules.targetScore));
+      var need = S.rules.winBy > 1 ? ', win by ' + S.rules.winBy : '';
+      card.appendChild(el('p', null, 'Match: ' + S.match.scores[0] + ' – ' + S.match.scores[1] +
+        ' (first to ' + S.rules.targetScore + need + ')'));
     }
 
     var actions = el('div', 'actions');

@@ -189,7 +189,38 @@ details.rules[open] summary::before { content: "▾ "; }
 }
 .badge.a { background: #74c6f230; color: var(--team-a); }
 .badge.b { background: #f09a7430; color: var(--team-b); }
+@keyframes refuse {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px) rotate(-2deg); }
+  40% { transform: translateX(5px) rotate(2deg); }
+  60% { transform: translateX(-4px) rotate(-1deg); }
+  80% { transform: translateX(3px); }
+}
+.tile.inhand.refused, button.refused {
+  animation: refuse 0.42s ease;
+  box-shadow: 0 0 0 2px var(--bad), 0 4px 10px #0008;
+}
+@keyframes drop {
+  from { transform: translateY(-22px) scale(1.1); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+.tile.board.fresh { animation: drop 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.endslot.armed { border-color: var(--gold); color: var(--gold); background: #e3b45b18; cursor: pointer; }
+.endslot:disabled { cursor: default; }
+.penaltybox {
+  margin: 14px 0 4px; padding: 10px 12px;
+  border: 1px solid #e2685f55; background: #e2685f1a;
+  border-radius: 10px; text-align: left;
+}
+.penaltybox h3 {
+  margin: 0 0 7px; font-size: 11.5px; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--bad);
+}
+.penaltybox div { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; padding: 2px 0; }
+.penaltybox .cost { color: var(--bad); font-weight: 700; white-space: nowrap; }
+
 @media (prefers-reduced-motion: reduce) {
+  .tile.board.fresh, .tile.inhand.refused, button.refused { animation: none; }
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
 @media (min-width: 620px) {

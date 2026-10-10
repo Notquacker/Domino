@@ -12,16 +12,21 @@ Curaçao-style partnership dominoes:
 - **Double-six set (28 tiles), four players, two teams.** Partners sit
   opposite each other: seats 1 & 3 against seats 2 & 4.
 - **The whole set is dealt** — seven tiles each, so there is **no boneyard**.
-  A player who cannot follow either open end passes.
-- **You must play if you can.** Passing with a playable tile is rejected by the
-  server, not merely discouraged.
+- **Nothing tells you what you can play.** The server deliberately does not
+  send the list of legal moves, and the board shows no highlighting: pick a
+  tile, pick an end, and find out. A tile that does not fit is refused.
+- **Passing is a choice.** You may pass at any time, even holding a playable
+  tile. But every pass is recorded, and when hands are revealed at the end of
+  the round, **a pass made on a tile you could have played gives the other
+  team a point**. Bluff at your own risk.
+- **Somebody has to lead**, so the opening tile cannot be passed.
 - **The 6-6 opens the first round** of a match, and whoever holds it leads.
   Afterwards the previous round's winner leads with any tile.
-- **A round ends** when someone plays their last tile, or when nobody can move.
-- **Scoring:** the winning team takes the pips left in the **opponents'** hands.
-  A blocked round goes to the team with the fewer pips; a dead level is a no-score
-  re-deal.
-- **The match** runs to 100, 150 or 200 points, chosen when the table is opened.
+- **A round ends** when someone plays their last tile, or when all four pass
+  in turn.
+- **Winning a round is worth one point.** A blocked round goes to the team
+  with the fewer pips; dead level scores nothing for the round.
+- **The match is first to 7, and you must be two clear** — 7-6 is not a win.
 
 ### House rules you can toggle
 
@@ -30,9 +35,11 @@ when the table is created:
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| Play to | 150 | Target score: 100, 150 or 200. |
-| Capicú bonus | off | +25 for going out on a tile that matched both open ends. |
-| Count every unplayed tile | off | Score all remaining pips, including your partner's, instead of just the opponents'. |
+| Scoring | **Rounds won** | One point per round, or the older style of counting the losers' pips. |
+| Play to | **7** | 5, 7, 9 or 11 rounds (100/150/200 when counting pips). |
+| Must win by 2 | **on** | The target alone is not enough; you need the margin. |
+| Point against a false pass | **on** | Passing while holding a playable tile scores for the other team. |
+| Capicú bonus | off | Extra for going out on a tile that matched both open ends. |
 | Forced 6-6 opening | on | Round one is opened by the 6-6 holder, who must play it. |
 
 Two conventions are baked in and worth confirming against how you play:
