@@ -97,6 +97,13 @@ let accountNotice = '';
  * change. Without this, simply opening the panel reported "Saved."
  */
 let awaitingAdminChange = false;
+/** Set while a password change is in flight, so success is reported once the
+ *  server has actually accepted it rather than the moment it was asked. */
+let awaitingPasswordChange = false;
+/** Whether the change-password panel is open. Held here because any redraw
+ *  rebuilds the <details> element, which would otherwise snap it shut
+ *  mid-edit — including on the redraw that reports a mistyped password. */
+let passwordPanelOpen = false;
 /** Typed-in values, kept across re-renders so a redraw cannot eat them. */
 const signIn = { username: recall('domino.lastuser') ?? '', password: '' };
 let name = recall(STORE.name);
@@ -268,6 +275,7 @@ function onMessage(msg: ServerMessage): void {
         error = msg.message;
         // A refused command is not a saved one.
         awaitingAdminChange = false;
+        awaitingPasswordChange = false;
       }
       pending = null;
       // A dead token would otherwise loop on every reconnect.
@@ -304,6 +312,10 @@ function onMessage(msg: ServerMessage): void {
       } else {
         remember('domino.lastuser', msg.account.username);
         signIn.password = '';
+        if (awaitingPasswordChange) {
+          accountNotice = 'Password changed.';
+          awaitingPasswordChange = false;
+        }
         // Keep the board honest the moment anything about you changes.
         net.send({ t: 'leaderboard' });
         if (msg.account.isAdmin && showAdmin) net.send({ t: 'adminUsers' });
@@ -477,6 +489,20 @@ function pass(): void {
  * The account panel. Absent entirely when the server has no Supabase project
  * configured, so a guest-only deployment shows no dead UI.
  */
+/**
+ * Read a form field straight from the page.
+ *
+ * Not from our own copy of it: a browser filling in a saved password sets the
+ * element's value directly, without firing an `input` event, so the copy stays
+ * empty while the field visibly shows the password. Reading the element is
+ * right however the value got there — typed, pasted, autofilled, or restored
+ * when the page came back from the background.
+ */
+function fieldValue(id: string): string {
+  const node = document.getElementById(id);
+  return node instanceof HTMLInputElement ? node.value : '';
+}
+
 /** A labelled text input that keeps what you typed across a redraw. */
 function field(
   id: string,
@@ -520,17 +546,50 @@ function renderSignInCard(): HTMLElement {
         signIn.password = v;
       }),
     );
+    /** Shared by both buttons: read the page, and refuse an empty form here
+     *  rather than letting the server answer "wrong name or password", which
+     *  sends people hunting for a typo that is not there. */
+    const credentials = (): { username: string; password: string } | null => {
+      const username = fieldValue('acctuser').trim();
+      const password = fieldValue('acctpass');
+      if (username === '' || password === '') {
+        error = 'Fill in both your name and a password.';
+        render();
+        return null;
+      }
+      return { username, password };
+    };
+
+    const submit = (): void => {
+      const creds = credentials();
+      if (creds === null) return;
+      accountNotice = '';
+      error = '';
+      net.send({ t: 'login', ...creds });
+    };
+    // On a phone the keyboard's own Go key is the obvious way to submit, and
+    // these fields are not in a <form>, so nothing would happen without this.
+    const pass = card.querySelector('#acctpass');
+    if (pass instanceof HTMLInputElement) {
+      pass.addEventListener('keydown', (ev) => {
+        if ((ev as KeyboardEvent).key === 'Enter') {
+          ev.preventDefault();
+          submit();
+        }
+      });
+    }
+
     const row = el('div', 'btnrow');
     const go = el('button', 'gold', 'Sign in') as HTMLButtonElement;
-    go.addEventListener('click', () => {
-      accountNotice = '';
-      net.send({ t: 'login', username: signIn.username, password: signIn.password });
-    });
+    go.addEventListener('click', submit);
     row.appendChild(go);
     const make = el('button', 'ghost', 'Create account') as HTMLButtonElement;
     make.addEventListener('click', () => {
+      const creds = credentials();
+      if (creds === null) return;
       accountNotice = '';
-      net.send({ t: 'register', username: signIn.username, password: signIn.password });
+      error = '';
+      net.send({ t: 'register', ...creds });
     });
     row.appendChild(make);
     card.appendChild(row);
@@ -553,28 +612,32 @@ function renderSignInCard(): HTMLElement {
 
   // Changing your own password: both fields, so a shoulder-surfer cannot
   // change it from an unlocked phone without knowing the old one.
-  const pw = { current: '', next: '' };
   const details = el('details') as HTMLDetailsElement;
   // Opened already when an admin has just reset it, so the prompt is not
   // hidden behind a tap the player has no reason to make.
-  details.open = me.mustChangePassword;
+  details.open = passwordPanelOpen || me.mustChangePassword;
+  details.addEventListener('toggle', () => {
+    passwordPanelOpen = details.open;
+  });
   details.appendChild(el('summary', undefined, 'Change my password'));
-  details.appendChild(
-    field('curpass', 'Current', 'password', '', (v) => {
-      pw.current = v;
-    }),
-  );
-  details.appendChild(
-    field('newpass', 'New', 'password', '', (v) => {
-      pw.next = v;
-    }),
-  );
+  details.appendChild(field('curpass', 'Current', 'password', '', () => {}));
+  details.appendChild(field('newpass', 'New', 'password', '', () => {}));
   const save = el('button', 'gold', 'Save password') as HTMLButtonElement;
   save.style.width = '100%';
   save.addEventListener('click', () => {
+    const current = fieldValue('curpass');
+    const next = fieldValue('newpass');
+    if (current === '' || next === '') {
+      error = 'Fill in both your current password and the new one.';
+      render();
+      return;
+    }
     accountNotice = '';
-    net.send({ t: 'changePassword', current: pw.current, next: pw.next });
-    accountNotice = 'Password changed.';
+    error = '';
+    // Not "Password changed." yet — the server has not answered. Saying so
+    // here would claim success for a change that may be about to be refused.
+    awaitingPasswordChange = true;
+    net.send({ t: 'changePassword', current, next });
   });
   details.appendChild(save);
   card.appendChild(details);
@@ -634,21 +697,24 @@ function renderAdminCard(): HTMLElement | null {
     head.appendChild(el('span', 'sub', `${user.wins} wins · ${user.matches} played`));
     box.appendChild(head);
 
-    const pass = { value: '' };
     const row = el('div', 'btnrow');
     const input = el('input') as HTMLInputElement;
     input.id = `set-${user.username}`;
     input.type = 'text';
     input.placeholder = 'new password';
-    input.addEventListener('input', () => {
-      pass.value = input.value;
-    });
     row.appendChild(input);
     const set = el('button', 'ghost small', 'Reset') as HTMLButtonElement;
     set.addEventListener('click', () => {
+      const next = fieldValue(input.id);
+      if (next === '') {
+        error = 'Type the new password first.';
+        render();
+        return;
+      }
       accountNotice = '';
+      error = '';
       awaitingAdminChange = true;
-      net.send({ t: 'adminSetPassword', username: user.username, next: pass.value });
+      net.send({ t: 'adminSetPassword', username: user.username, next });
     });
     row.appendChild(set);
     box.appendChild(row);
@@ -664,7 +730,7 @@ function renderAdminCard(): HTMLElement | null {
     setWins.addEventListener('click', () => {
       accountNotice = '';
       awaitingAdminChange = true;
-      net.send({ t: 'adminSetWins', username: user.username, wins: Number(wins.value) });
+      net.send({ t: 'adminSetWins', username: user.username, wins: Number(fieldValue(wins.id)) });
     });
     row2.appendChild(setWins);
     const toggle = el('button', 'ghost small', user.isAdmin ? 'Drop admin' : 'Make admin') as HTMLButtonElement;
