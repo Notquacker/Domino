@@ -447,6 +447,7 @@ export class Room {
       seats,
       hand,
       board: round?.board ?? [],
+      openerTile: round?.openerTile ?? null,
       ends: round === null ? null : openEnds(round.board),
       turn: match?.phase === 'playing' ? (round?.turn ?? null) : null,
       scores: match?.scores ?? [0, 0],

@@ -33,6 +33,8 @@ export interface PlayerView {
   /** Your tiles. Never anyone else's. */
   readonly hand: readonly TileId[];
   readonly board: readonly BoardTile[];
+  /** The tile that opened the round, which the board is laid out around. */
+  readonly openerTile: TileId | null;
   readonly ends: { readonly left: Pip; readonly right: Pip } | null;
   readonly turn: Seat | null;
   readonly scores: readonly [number, number];

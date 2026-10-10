@@ -95,47 +95,6 @@
     node.style.zIndex = String(h % 7);
   }
 
-  function boardHeight() {
-    return Math.max(170, Math.min(520, window.innerHeight - 330));
-  }
-
-  /** Walk the chain around a rectangle, turning inward if it laps. */
-  function squareChain(board, scale, width, height) {
-    var shortS = TILE_SHORT * scale, longS = TILE_LONG * scale, step = TILE_GAP;
-    var spots = [], dir = 0, x = 0, y = 0, maxX = 0, maxY = 0;
-    var bound = { left: 0, top: 0, right: width, bottom: height };
-    board.forEach(function (p) {
-      var isDouble = p.left === p.right;
-      for (var turns = 0; turns < 4; turns++) {
-        var vert = dir === 1 || dir === 3;
-        var w = vert ? (isDouble ? longS : shortS) : (isDouble ? shortS : longS);
-        var h = vert ? (isDouble ? shortS : longS) : (isDouble ? longS : shortS);
-        var ok = dir === 0 ? x + w <= bound.right
-          : dir === 1 ? y + h <= bound.bottom
-          : dir === 2 ? x >= bound.left : y >= bound.top;
-        if (ok) break;
-        dir = (dir + 1) % 4;
-        if (dir === 0) {
-          bound = { left: bound.left + longS * 0.9, top: bound.top + longS * 0.9,
-            right: bound.right - longS * 0.9, bottom: bound.bottom - longS * 0.9 };
-          x = bound.left; y = bound.top;
-        }
-      }
-      var vNow = dir === 1 || dir === 3;
-      var aw = vNow ? (isDouble ? longS : shortS) : (isDouble ? shortS : longS);
-      var ah = vNow ? (isDouble ? shortS : longS) : (isDouble ? longS : shortS);
-      if (dir === 2) x -= aw;
-      if (dir === 3) y -= ah;
-      // Keep every tile inside the box; a corner overlap beats a sliced edge.
-      x = Math.min(Math.max(x, bound.left), Math.max(bound.left, bound.right - aw));
-      y = Math.min(Math.max(y, bound.top), Math.max(bound.top, bound.bottom - ah));
-      spots.push({ tile: p, x: x, y: y, vertical: vNow, flipped: dir === 2 || dir === 3 });
-      maxX = Math.max(maxX, x + aw); maxY = Math.max(maxY, y + ah);
-      if (dir === 0) x += aw + step; else if (dir === 1) y += ah + step;
-      else if (dir === 2) x -= step; else y -= step;
-    });
-    return { spots: spots, width: maxX, height: maxY };
-  }
   function handTile(id, state) {
     var t = D.parseTile(id), n = tileNode(t.low, t.high, true, 'inhand ' + state);
     if (state !== 'dead') { n.tabIndex = 0; n.setAttribute('role', 'button'); }
@@ -385,17 +344,67 @@
   }
 
   /** Fold the chain into rows that fit, each running back the other way. */
-  function foldChain(board, scale, available) {
-    var shortW = TILE_SHORT * scale + TILE_GAP;
-    var longW = TILE_LONG * scale + TILE_GAP;
-    var rows = [[]], used = 0;
-    board.forEach(function (p) {
-      var w = p.left === p.right ? shortW : longW;
-      if (used + w > available && rows[rows.length - 1].length > 0) { rows.push([]); used = 0; }
-      rows[rows.length - 1].push(p);
-      used += w;
+  var MAX_RUN = 7;
+
+  /**
+   * Lay the chain out as one continuous line of dominoes: every tile is
+   * positioned from where the previous one ended, so neighbours touch. It
+   * starts at the tile that opened the round and grows both ways from it,
+   * turning a corner once a straight run reaches MAX_RUN.
+   */
+  function layoutChain(board, openerId, mode, scale) {
+    var longS = TILE_LONG * scale, shortS = TILE_SHORT * scale;
+    var spots = [];
+    if (!board.length) return { spots: spots, width: 0, height: 0 };
+
+    var openerIndex = 0;
+    if (openerId) {
+      for (var k = 0; k < board.length; k++) if (board[k].id === openerId) { openerIndex = k; break; }
+    }
+    function runLimit(dir) {
+      return mode === 'square' ? MAX_RUN : (dir === 0 || dir === 2 ? MAX_RUN : 1);
+    }
+    // Both arms share the opener's row, so each gets half of it.
+    var halfRun = Math.max(1, Math.floor((MAX_RUN - 1) / 2));
+
+    function put(tile, index, dir, cx, cy) {
+      var isDouble = tile.left === tile.right;
+      var along = isDouble ? shortS : longS, across = isDouble ? longS : shortS;
+      var vertical = dir === 1 || dir === 3;
+      var x = dir === 2 ? cx - along : (dir === 0 ? cx : cx - across / 2);
+      var y = dir === 3 ? cy - along : (dir === 1 ? cy : cy - across / 2);
+      spots.push({ index: index, tile: tile, x: x, y: y,
+        w: vertical ? across : along, h: vertical ? along : across,
+        vertical: vertical, flipped: dir === 2 || dir === 3 });
+      return {
+        x: cx + (dir === 0 ? along : (dir === 2 ? -along : 0)),
+        y: cy + (dir === 1 ? along : (dir === 3 ? -along : 0))
+      };
+    }
+
+    var cursor = put(board[openerIndex], openerIndex, 0, 0, 0);
+    var dir = 0, run = 1, limit = halfRun + 1;
+    for (var i = openerIndex + 1; i < board.length; i++) {
+      if (run >= limit) { dir = (dir + 1) % 4; run = 0; limit = runLimit(dir); }
+      cursor = put(board[i], i, dir, cursor.x, cursor.y);
+      run++;
+    }
+    var back = 2, backRun = 1, backLimit = MAX_RUN - halfRun, bc = { x: 0, y: 0 };
+    for (var j = openerIndex - 1; j >= 0; j--) {
+      if (backRun >= backLimit) { back = (back + 1) % 4; backRun = 0; backLimit = runLimit(back); }
+      bc = put(board[j], j, back, bc.x, bc.y);
+      backRun++;
+    }
+
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    spots.forEach(function (sp) {
+      minX = Math.min(minX, sp.x); minY = Math.min(minY, sp.y);
+      maxX = Math.max(maxX, sp.x + sp.w); maxY = Math.max(maxY, sp.y + sp.h);
     });
-    return rows;
+    spots.forEach(function (sp) { sp.x -= minX; sp.y -= minY; });
+    // Draw along the chain, not in the order the two arms were walked.
+    spots.sort(function (a, b) { return a.index - b.index; });
+    return { spots: spots, width: maxX - minX, height: maxY - minY };
   }
 
   function renderTable() {
@@ -411,56 +420,44 @@
       return box;
     }
 
-    var scale = chainScale(board.length);
-    chain.style.setProperty('--tile-scale', String(scale));
-
-    var slots = isPlaying && S.layout === 'snake' ? 2 * (34 * scale + TILE_GAP) : 0;
-    var available = Math.max(140, Math.min(window.innerWidth, 920) - 32 - slots);
-
     var ids = board.map(function (b) { return b.id; });
     var grewRight = ids.length > lastBoard.length && ids[0] === lastBoard[0];
     var grewLeft = ids.length > lastBoard.length && !grewRight;
     var freshId = grewRight ? ids[ids.length - 1] : (grewLeft ? ids[0] : null);
 
-    if (S.layout === 'square') {
-      var side = Math.min(available, boardHeight());
-      var plan = squareChain(board, scale, available, side);
-      var pitch = el('div', 'pitch');
-      pitch.style.width = Math.max(plan.width, 1) + 'px';
-      pitch.style.height = Math.max(plan.height, 1) + 'px';
-      plan.spots.forEach(function (sp) {
-        var node = boardTile(sp.tile, sp.tile.id === freshId, sp.flipped, sp.vertical);
-        node.style.left = sp.x + 'px';
-        node.style.top = sp.y + 'px';
-        if (S.messy) applyMess(node, sp.tile.id);
-        pitch.appendChild(node);
-      });
-      chain.appendChild(pitch);
-      if (isPlaying) {
-        var ends = el('div', 'endrow');
-        ends.appendChild(endSlot('left'));
-        ends.appendChild(el('span', 'endlabel', 'open ends'));
-        ends.appendChild(endSlot('right'));
-        chain.appendChild(ends);
-      }
-      box.appendChild(chain);
-      lastBoard = ids;
-      return box;
+    var roomW = Math.max(160, Math.min(window.innerWidth, 920) - 28);
+    var roomH = Math.max(150, Math.min(430, window.innerHeight - 380));
+    var scale = chainScale(board.length);
+    var opener = round().openerTile;
+    var plan = layoutChain(board, opener, S.layout, scale);
+    for (var g = 0; g < 8 && (plan.width > roomW || plan.height > roomH); g++) {
+      scale *= Math.min(roomW / plan.width, roomH / plan.height, 0.92);
+      plan = layoutChain(board, opener, S.layout, scale);
     }
+    chain.style.setProperty('--tile-scale', String(scale));
 
-    var rows = foldChain(board, scale, available);
-    rows.forEach(function (tiles, index) {
-      var reversed = index % 2 === 1;
-      var row = el('div', 'chainrow' + (reversed ? ' reverse' : ''));
-      if (index === 0 && isPlaying) row.appendChild(endSlot('left'));
-      tiles.forEach(function (p) {
-        var node = boardTile(p, p.id === freshId, reversed, false);
-        if (S.messy) applyMess(node, p.id);
-        row.appendChild(node);
-      });
-      if (index === rows.length - 1 && isPlaying) row.appendChild(endSlot('right'));
-      chain.appendChild(row);
+    var pitch = el('div', 'pitch');
+    pitch.style.width = Math.max(plan.width, 1) + 'px';
+    pitch.style.height = Math.max(plan.height, 1) + 'px';
+    plan.spots.forEach(function (sp) {
+      var node = boardTile(sp.tile, sp.tile.id === freshId, sp.flipped, sp.vertical);
+      node.style.left = sp.x + 'px';
+      node.style.top = sp.y + 'px';
+      node.style.width = sp.w + 'px';
+      node.style.height = sp.h + 'px';
+      if (sp.tile.id === opener) node.className += ' opener';
+      if (S.messy) applyMess(node, sp.tile.id);
+      pitch.appendChild(node);
     });
+    chain.appendChild(pitch);
+
+    if (isPlaying) {
+      var ends = el('div', 'endrow');
+      ends.appendChild(endSlot('left'));
+      ends.appendChild(el('span', 'endlabel', 'open ends'));
+      ends.appendChild(endSlot('right'));
+      chain.appendChild(ends);
+    }
 
     box.appendChild(chain);
     lastBoard = ids;

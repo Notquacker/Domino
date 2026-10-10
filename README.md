@@ -172,17 +172,26 @@ so a guest-only deployment ships ~8 kB gzipped rather than ~67 kB.
 
 ## The board
 
-The chain is drawn one of two ways, switched with the button in the top bar.
-It is a local preference, not a table rule, so everyone can pick their own.
+The chain is drawn as one continuous line of dominoes. Every tile is placed
+from the point where the last one ended, so neighbours actually touch — it
+reads as a single connected chain rather than separate rows.
 
-- **Snaking** folds the chain into rows that fit the screen, each running back
-  the opposite way, with the open ends at the two tips.
-- **Square** walks the chain around a rectangle — right along the top, down
-  the side, back along the bottom — spiralling inward if it laps. Tiles turn
-  with the corner, and doubles lie across the run as they should.
+It is laid out around the tile that opened the round, growing both ways from
+it the way a chain spreads across a real table, and a straight run turns a
+corner after **seven tiles**. Because both arms share the opener's row, that
+row holds seven in total rather than seven in each direction.
 
-Either way the whole board stays on screen: tiles shrink as the chain grows,
-and nothing scrolls sideways.
+Two shapes, switched with the button in the top bar. It is a local preference
+rather than a table rule, so everyone can pick their own.
+
+- **Snaking** turns back on itself, giving the S and Z shapes.
+- **Square** keeps turning the same way, sweeping out a rectangle whose two
+  open ends finish apart.
+
+Tiles turn with each corner and doubles lie across the run, which falls out of
+a single rule: a tile lies across its run, a double along it, and turning the
+chain swaps both. Tiles shrink as the chain grows, so the whole board stays on
+screen without scrolling.
 
 ## How it is put together
 

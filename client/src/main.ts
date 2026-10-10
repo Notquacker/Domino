@@ -797,6 +797,9 @@ const TILE_GAP = 3;
 
 export type Layout = 'snake' | 'square';
 
+/** Longest straight run before the chain has to turn a corner. */
+const MAX_RUN = 7;
+
 /**
  * Shrink the tiles as the chain grows so the whole board keeps fitting on
  * screen. Twenty-eight full-size tiles would be several screens wide.
@@ -804,130 +807,143 @@ export type Layout = 'snake' | 'square';
 function chainScale(count: number): number {
   if (count <= 8) return 1;
   if (count <= 14) return 0.84;
-  if (count <= 20) return 0.7;
-  return 0.58;
-}
-
-/** Roughly how much height the board area has, for the square layout. */
-function boardHeight(): number {
-  return Math.max(170, Math.min(520, window.innerHeight - 350));
+  if (count <= 20) return 0.72;
+  return 0.6;
 }
 
 type Placed = PlayerView['board'][number];
 
-/**
- * Fold the chain into rows that fit the screen, each running the opposite way
- * to the one above — the way a real chain snakes back across a table.
- */
-function foldChain(board: readonly Placed[], scale: number, available: number): Placed[][] {
-  const short = TILE_SHORT * scale + TILE_GAP;
-  const long = TILE_LONG * scale + TILE_GAP;
-  const rows: Placed[][] = [[]];
-  let used = 0;
-  for (const placed of board) {
-    const width = placed.left === placed.right ? short : long;
-    const row = rows[rows.length - 1] as Placed[];
-    if (used + width > available && row.length > 0) {
-      rows.push([]);
-      used = 0;
-    }
-    (rows[rows.length - 1] as Placed[]).push(placed);
-    used += width;
-  }
-  return rows;
-}
-
 interface Spot {
+  /** Position in the chain, so the tiles can be drawn in order. */
+  readonly index: number;
   readonly tile: Placed;
   readonly x: number;
   readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  /** True when this stretch of the chain runs up or down the screen. */
   readonly vertical: boolean;
+  /** True when the chain is travelling left or up, so the halves swap. */
   readonly flipped: boolean;
 }
 
+/** 0 right, 1 down, 2 left, 3 up. */
+type Dir = 0 | 1 | 2 | 3;
+
 /**
- * Walk the chain around a rectangle: right along the top, down the side, back
- * along the bottom, up the other side, turning inward if it runs the whole way
- * round. The same path a long chain takes on a real table.
+ * Lay the chain out as one continuous line of dominoes.
+ *
+ * Every tile is positioned from the point where the previous one ended, so
+ * neighbours actually touch — the chain reads as a single connected line
+ * rather than separate strips. It starts at the tile that opened the round and
+ * grows both ways from it, the way a real chain spreads across a table, and
+ * turns a corner once a straight run reaches MAX_RUN.
  */
-function squareChain(
+function layoutChain(
   board: readonly Placed[],
+  openerId: string | null,
+  mode: Layout,
   scale: number,
-  width: number,
-  height: number,
 ): { spots: Spot[]; width: number; height: number } {
-  const short = TILE_SHORT * scale;
   const long = TILE_LONG * scale;
-  const step = TILE_GAP;
-
+  const short = TILE_SHORT * scale;
   const spots: Spot[] = [];
-  // 0 right, 1 down, 2 left, 3 up.
-  let dir = 0;
-  let x = 0;
-  let y = 0;
-  let bound = { left: 0, top: 0, right: width, bottom: height };
-  let maxX = 0;
-  let maxY = 0;
+  if (board.length === 0) return { spots, width: 0, height: 0 };
 
-  for (const placed of board) {
-    const isDouble = placed.left === placed.right;
+  const openerIndex = Math.max(
+    0,
+    openerId === null ? 0 : board.findIndex((t) => t.id === openerId),
+  );
+
+  /** How long a run may be before turning. Snake rows stack via a single
+   * perpendicular corner tile; a square turns after a full run each time. */
+  const runLimit = (dir: Dir): number =>
+    mode === 'square' ? MAX_RUN : dir === 0 || dir === 2 ? MAX_RUN : 1;
+
+  // The opener's row is shared by both arms, so each gets half of it. Without
+  // this the middle row runs to MAX_RUN in each direction — a row of thirteen,
+  // and a board so wide it has to be shrunk to stay on screen.
+  const halfRun = Math.max(1, Math.floor((MAX_RUN - 1) / 2));
+
+  const size = (tile: Placed, dir: Dir): { along: number; across: number } => {
+    const isDouble = tile.left === tile.right;
+    return isDouble ? { along: short, across: long } : { along: long, across: short };
+  };
+
+  /** Place one tile so its near edge meets `cursor`, and return the far edge. */
+  const put = (
+    tile: Placed,
+    index: number,
+    dir: Dir,
+    cx: number,
+    cy: number,
+  ): { x: number; y: number } => {
+    const { along, across } = size(tile, dir);
     const vertical = dir === 1 || dir === 3;
-    const along = isDouble ? short : long;
-    const across = isDouble ? long : short;
     const w = vertical ? across : along;
     const h = vertical ? along : across;
+    const x = dir === 2 ? cx - along : dir === 0 ? cx : cx - across / 2;
+    const y = dir === 3 ? cy - along : dir === 1 ? cy : cy - across / 2;
+    spots.push({ index, tile, x, y, w, h, vertical, flipped: dir === 2 || dir === 3 });
+    return {
+      x: cx + (dir === 0 ? along : dir === 2 ? -along : 0),
+      y: cy + (dir === 1 ? along : dir === 3 ? -along : 0),
+    };
+  };
 
-    // Turn a corner when this tile would leave the box.
-    for (let turns = 0; turns < 4; turns++) {
-      const fitsHere =
-        dir === 0
-          ? x + w <= bound.right
-          : dir === 1
-            ? y + h <= bound.bottom
-            : dir === 2
-              ? x >= bound.left
-              : y >= bound.top;
-      if (fitsHere) break;
-      dir = (dir + 1) % 4;
-      if (dir === 0) {
-        // A full lap: step inward so the chain spirals rather than overlapping.
-        bound = {
-          left: bound.left + long * 0.9,
-          top: bound.top + long * 0.9,
-          right: bound.right - long * 0.9,
-          bottom: bound.bottom - long * 0.9,
-        };
-        x = bound.left;
-        y = bound.top;
-      }
+  // The opener sits at the origin, lying along the chain.
+  let cursor = put(board[openerIndex] as Placed, openerIndex, 0, 0, 0);
+
+  // Forward arm: the right-hand end of the chain.
+  let dir: Dir = 0;
+  let run = 1;
+  let limit = halfRun + 1;
+  for (let i = openerIndex + 1; i < board.length; i++) {
+    if (run >= limit) {
+      dir = ((dir + 1) % 4) as Dir;
+      run = 0;
+      limit = runLimit(dir);
     }
-
-    const vNow = dir === 1 || dir === 3;
-    const aw = vNow ? (isDouble ? long : short) : isDouble ? short : long;
-    const ah = vNow ? (isDouble ? short : long) : isDouble ? long : short;
-    if (dir === 2) x -= aw;
-    if (dir === 3) y -= ah;
-
-    // Running down the right side or back along the bottom, the cursor sits
-    // wherever the previous leg left it, which can hang outside the box. Keep
-    // every tile inside its bounds; a slight overlap at a corner is far better
-    // than a tile sliced off at the edge of the screen.
-    const px = Math.min(Math.max(x, bound.left), Math.max(bound.left, bound.right - aw));
-    const py = Math.min(Math.max(y, bound.top), Math.max(bound.top, bound.bottom - ah));
-    x = px;
-    y = py;
-
-    spots.push({ tile: placed, x, y, vertical: vNow, flipped: dir === 2 || dir === 3 });
-    maxX = Math.max(maxX, x + aw);
-    maxY = Math.max(maxY, y + ah);
-
-    if (dir === 0) x += aw + step;
-    else if (dir === 1) y += ah + step;
-    else if (dir === 2) x -= step;
-    else y -= step;
+    cursor = put(board[i] as Placed, i, dir, cursor.x, cursor.y);
+    run++;
   }
 
-  return { spots, width: maxX, height: maxY };
+  // Backward arm: the left-hand end, growing the other way from the opener.
+  // It turns the same way round, so the two arms sweep out the loop together
+  // and finish apart — the shape of a chain that has wrapped the table.
+  let back: Dir = 2;
+  let backRun = 1;
+  let backLimit = MAX_RUN - halfRun;
+  let backCursor = { x: 0, y: 0 };
+  for (let i = openerIndex - 1; i >= 0; i--) {
+    if (backRun >= backLimit) {
+      back = ((back + 1) % 4) as Dir;
+      backRun = 0;
+      backLimit = runLimit(back);
+    }
+    backCursor = put(board[i] as Placed, i, back, backCursor.x, backCursor.y);
+    backRun++;
+  }
+
+  // Shift everything positive and report the bounding box.
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const spot of spots) {
+    minX = Math.min(minX, spot.x);
+    minY = Math.min(minY, spot.y);
+    maxX = Math.max(maxX, spot.x + spot.w);
+    maxY = Math.max(maxY, spot.y + spot.h);
+  }
+  // Draw in chain order, not the order the two arms were walked, so the DOM
+  // reads along the chain like the tiles do.
+  const shifted = spots
+    .map((spot) => ({ ...spot, x: spot.x - minX, y: spot.y - minY }))
+    .sort((a, b) => a.index - b.index);
+  spots.length = 0;
+  spots.push(...shifted);
+  return { spots, width: maxX - minX, height: maxY - minY };
 }
 
 function renderTable(v: PlayerView): HTMLElement {
@@ -948,60 +964,44 @@ function renderTable(v: PlayerView): HTMLElement {
     return box;
   }
 
-  const scale = chainScale(v.board.length);
-  chain.style.setProperty('--tile-scale', String(scale));
-
-  const gutter = 32;
-  // In the square layout the end slots sit on their own row beneath the ring,
-  // so they do not eat into the width the chain can use.
-  const slots = playing && layout === 'snake' ? 2 * (34 * scale + TILE_GAP) : 0;
-  const available = Math.max(140, Math.min(window.innerWidth, 920) - gutter - slots);
-
   const ids = v.board.map((b) => b.id);
   const grewRight = ids.length > lastBoard.length && ids[0] === lastBoard[0];
   const grewLeft = ids.length > lastBoard.length && !grewRight;
   const freshId = grewRight ? ids[ids.length - 1] : grewLeft ? ids[0] : null;
 
-  if (layout === 'square') {
-    // Keep it roughly square rather than a tall thin loop.
-    const side = Math.min(available, boardHeight());
-    const plan = squareChain(v.board, scale, available, side);
-    const pitch = el('div', 'pitch');
-    pitch.style.width = `${Math.max(plan.width, 1)}px`;
-    pitch.style.height = `${Math.max(plan.height, 1)}px`;
-    for (const spot of plan.spots) {
-      const node = boardTile(spot.tile, spot.tile.id === freshId, spot.flipped, spot.vertical);
-      node.style.left = `${spot.x}px`;
-      node.style.top = `${spot.y}px`;
-      if (messy) applyMess(node, spot.tile.id);
-      pitch.appendChild(node);
-    }
-    chain.appendChild(pitch);
-    if (playing) {
-      const ends = el('div', 'endrow');
-      ends.appendChild(endSlot(v, 'left'));
-      ends.appendChild(el('span', 'endlabel', 'open ends'));
-      ends.appendChild(endSlot(v, 'right'));
-      chain.appendChild(ends);
-    }
-    box.appendChild(chain);
-    lastBoard = ids;
-    return box;
+  // Shrink until the whole chain fits the space available.
+  const roomW = Math.max(160, Math.min(window.innerWidth, 920) - 28);
+  const roomH = Math.max(150, Math.min(430, window.innerHeight - 380));
+  let scale = chainScale(v.board.length);
+  let plan = layoutChain(v.board, v.openerTile, layout, scale);
+  for (let guard = 0; guard < 8 && (plan.width > roomW || plan.height > roomH); guard++) {
+    scale *= Math.min(roomW / plan.width, roomH / plan.height, 0.92);
+    plan = layoutChain(v.board, v.openerTile, layout, scale);
   }
+  chain.style.setProperty('--tile-scale', String(scale));
 
-  const rows = foldChain(v.board, scale, available);
-  rows.forEach((tiles, index) => {
-    const reversed = index % 2 === 1;
-    const row = el('div', `chainrow${reversed ? ' reverse' : ''}`);
-    if (index === 0 && playing) row.appendChild(endSlot(v, 'left'));
-    for (const placed of tiles) {
-      const node = boardTile(placed, placed.id === freshId, reversed);
-      if (messy) applyMess(node, placed.id);
-      row.appendChild(node);
-    }
-    if (index === rows.length - 1 && playing) row.appendChild(endSlot(v, 'right'));
-    chain.appendChild(row);
-  });
+  const pitch = el('div', 'pitch');
+  pitch.style.width = `${Math.max(plan.width, 1)}px`;
+  pitch.style.height = `${Math.max(plan.height, 1)}px`;
+  for (const spot of plan.spots) {
+    const node = boardTile(spot.tile, spot.tile.id === freshId, spot.flipped, spot.vertical);
+    node.style.left = `${spot.x}px`;
+    node.style.top = `${spot.y}px`;
+    node.style.width = `${spot.w}px`;
+    node.style.height = `${spot.h}px`;
+    if (spot.tile.id === v.openerTile) node.classList.add('opener');
+    if (messy) applyMess(node, spot.tile.id);
+    pitch.appendChild(node);
+  }
+  chain.appendChild(pitch);
+
+  if (playing) {
+    const ends = el('div', 'endrow');
+    ends.appendChild(endSlot(v, 'left'));
+    ends.appendChild(el('span', 'endlabel', 'open ends'));
+    ends.appendChild(endSlot(v, 'right'));
+    chain.appendChild(ends);
+  }
 
   box.appendChild(chain);
   lastBoard = ids;

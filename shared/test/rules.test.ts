@@ -40,6 +40,7 @@ function round(over: Partial<RoundState> = {}): RoundState {
     starter: 0,
     requireTile: null,
     passLog: [],
+    openerTile: null,
     ...over,
   };
 }
@@ -889,5 +890,38 @@ describe('a capicú under round scoring', () => {
       assert.ok(result.penalties[0] >= 0);
     }
     assert.ok(state.scores[0] >= 0, 'scoring stayed coherent');
+  });
+});
+
+describe('remembering the opening tile', () => {
+  it('records the first tile played and never changes it', () => {
+    // Seat 1 must hold a six, or the round blocks the moment the 6-6 is down.
+    const m = match(
+      round({ hands: [['6-6', '0-1'], ['1-6', '2-2'], ['2-3'], ['3-4']], requireTile: '6-6' }),
+      { roundNumber: 1 },
+    );
+    assert.equal(m.round!.openerTile, null, 'nothing opened yet');
+
+    const opened = applyMove(m, 0, { kind: 'play', tile: '6-6', end: 'right' });
+    assert.equal(opened.match.round!.openerTile, '6-6');
+
+    // A later tile, played at either end, leaves the opener alone.
+    const next = applyMove(opened.match, 1, { kind: 'play', tile: '1-6', end: 'right' });
+    assert.equal(next.match.round!.openerTile, '6-6');
+  });
+
+  it('stays the opener even when the chain grows to its left', () => {
+    const board = placeTile([], '3-3', 'right');
+    const m = match(round({ hands: [['3-5'], ['2-3'], ['1-1'], ['4-4']], board, openerTile: '3-3' }));
+    const out = applyMove(m, 0, { kind: 'play', tile: '3-5', end: 'left' });
+    assert.equal(out.match.round!.openerTile, '3-3');
+    // The opener is no longer first in the array, which is exactly why the id
+    // is recorded rather than an index.
+    assert.notEqual(out.match.round!.board[0]!.id, '3-3');
+  });
+
+  it('is cleared by a fresh deal', () => {
+    const m = newMatch(roundRules(), seededRng(9));
+    assert.equal(m.round!.openerTile, null);
   });
 });

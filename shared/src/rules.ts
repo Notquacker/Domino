@@ -158,6 +158,12 @@ export interface RoundState {
   readonly requireTile: TileId | null;
   /** Every pass this round, judged at the moment it was made. */
   readonly passLog: readonly PassRecord[];
+  /**
+   * The tile that opened the round. The chain grows from it in both
+   * directions, so a board can be drawn with it held in the middle the way it
+   * sits on a real table.
+   */
+  readonly openerTile: TileId | null;
 }
 
 export interface RoundResult {
@@ -337,6 +343,7 @@ export function dealRound(
     starter: turn,
     requireTile,
     passLog: [],
+    openerTile: null,
   };
 }
 
@@ -471,6 +478,7 @@ export function applyMove(match: MatchState, seat: Seat, move: Move): MoveOutcom
   if (!hand.includes(move.tile)) throw new RuleError('you do not hold that tile');
 
   const hands = round.hands.map((h, i) => (i === seat ? h.filter((id) => id !== move.tile) : h));
+  const openingPlay = round.board.length === 0;
   const board = placeTile(round.board, move.tile, move.end);
   const played: RoundState = {
     ...round,
@@ -479,6 +487,7 @@ export function applyMove(match: MatchState, seat: Seat, move: Move): MoveOutcom
     passes: 0,
     turn: nextSeat(round.turn),
     requireTile: null,
+    openerTile: openingPlay ? move.tile : round.openerTile,
   };
 
   const remainingInHand = (hands[seat] ?? []).length;
