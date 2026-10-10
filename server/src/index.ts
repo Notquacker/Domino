@@ -272,6 +272,10 @@ async function handle(socket: WebSocket, session: Session, msg: ClientMessage): 
       room.rematch(player);
       room.broadcastState();
       return;
+    case 'smash':
+      room.smash(player);
+      room.broadcastState();
+      return;
     case 'chat': {
       const text = sanitizeChat(msg.text);
       if (text.length > 0) room.broadcastChat(player.name, text);

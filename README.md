@@ -25,7 +25,10 @@ Curaçao-style partnership dominoes:
 - **A round ends** when someone plays their last tile, or when all four pass
   in turn.
 - **Winning a round is worth one point — or two for a capicú**, going out on
-  a tile that matched both open ends. A blocked round goes to the team with
+  a tile that matched both open ends. A capicú also earns your team a
+  **smash**: slam the table and send the tiles skidding out of line until the
+  next deal. The server decides who has earned one, so the button cannot be
+  conjured up by a tampered client. A blocked round goes to the team with
   the fewer pips; dead level scores nothing for the round.
 - **The match is first to 10 — but only while the other team is under 5.**
   The moment **both** teams have reached 5 the match stops level and is
@@ -166,6 +169,20 @@ game in progress.
 
 `supabase-js` is loaded in its own chunk only when the project is configured,
 so a guest-only deployment ships ~8 kB gzipped rather than ~67 kB.
+
+## The board
+
+The chain is drawn one of two ways, switched with the button in the top bar.
+It is a local preference, not a table rule, so everyone can pick their own.
+
+- **Snaking** folds the chain into rows that fit the screen, each running back
+  the opposite way, with the open ends at the two tips.
+- **Square** walks the chain around a rectangle — right along the top, down
+  the side, back along the bottom — spiralling inward if it laps. Tiles turn
+  with the corner, and doubles lie across the run as they should.
+
+Either way the whole board stays on screen: tiles shrink as the chain grows,
+and nothing scrolls sideways.
 
 ## How it is put together
 

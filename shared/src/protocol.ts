@@ -47,6 +47,12 @@ export interface PlayerView {
   readonly winner: Team | null;
   /** True when the match finished level on the drawn line. */
   readonly drawn: boolean;
+  /**
+   * True when you have earned a smash and not yet used it: your team took the
+   * round with a capicú. The server is the judge, so the button cannot be
+   * conjured up by a tampered client.
+   */
+  readonly smashReady: boolean;
   readonly log: readonly string[];
   /** Epoch ms by which the player on turn must move, or null if untimed. */
   readonly turnDeadline: number | null;
@@ -71,6 +77,8 @@ export type ClientMessage =
   | { readonly t: 'nextRound' }
   | { readonly t: 'rematch' }
   | { readonly t: 'chat'; readonly text: string }
+  /** Slam the table after taking a round with a capicú. */
+  | { readonly t: 'smash' }
   | { readonly t: 'ping' };
 
 export type ServerMessage =
@@ -85,6 +93,7 @@ export type ServerMessage =
   | { readonly t: 'chat'; readonly from: string; readonly text: string; readonly at: number }
   | { readonly t: 'error'; readonly message: string }
   | { readonly t: 'authed'; readonly ok: boolean; readonly anonymous: boolean }
+  | { readonly t: 'smashed'; readonly by: Seat; readonly name: string }
   | { readonly t: 'pong' };
 
 export const TEAM_NAMES: readonly [string, string] = ['Team A', 'Team B'];

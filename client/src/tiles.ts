@@ -51,11 +51,19 @@ function tile(a: number, b: number, vertical: boolean, extra: string): HTMLEleme
  * halves rather than mirroring with a transform keeps the drop animation free
  * to use `transform` itself.
  */
-export function boardTile(placed: BoardTile, fresh = false, flipped = false): HTMLElement {
+export function boardTile(
+  placed: BoardTile,
+  fresh = false,
+  flipped = false,
+  /** True when this stretch of the chain runs up or down the screen. */
+  runsVertically = false,
+): HTMLElement {
   const isDouble = placed.left === placed.right;
   const near = flipped ? placed.right : placed.left;
   const far = flipped ? placed.left : placed.right;
-  const node = tile(near, far, isDouble, `board${fresh ? ' fresh' : ''}`);
+  // A tile lies across the run; a double lies along it. Turn the chain and
+  // both swap, which is exactly XOR.
+  const node = tile(near, far, isDouble !== runsVertically, `board${fresh ? ' fresh' : ''}`);
   node.dataset['tile'] = placed.id;
   node.setAttribute('aria-label', `${placed.left} ${placed.right}`);
   return node;

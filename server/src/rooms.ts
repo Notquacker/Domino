@@ -138,6 +138,8 @@ export class Room {
   private timer: NodeJS.Timeout | null = null;
   private emptySince: number | null = Date.now();
   private startedAt: Date | null = null;
+  /** Set once the capicú winners have slammed the table this round. */
+  private smashedThisRound = false;
   /** Guards against writing the same finished match more than once. */
   private recorded = false;
 
@@ -238,6 +240,7 @@ export class Room {
     if (player.seat === null) throw new RuleError('you are watching, not playing');
     const outcome = applyMove(match, player.seat, move);
     this.match = outcome.match;
+    if (outcome.result !== null) this.smashedThisRound = false;
     this.pushLog(this.describeMove(player, move));
     if (outcome.result !== null) this.pushLog(this.describeRoundResult(outcome.result));
     this.armTimer();
@@ -249,6 +252,7 @@ export class Room {
     if (match === null) throw new RuleError('the match has not started');
     if (match.phase !== 'roundOver') throw new RuleError('the round is still going');
     if (player.seat === null) throw new RuleError('only players can deal');
+    this.smashedThisRound = false;
     this.match = startNextRound(match, cryptoRng());
     this.pushLog(
       `Round ${this.match.roundNumber}. ${this.seatLabel(this.match.round?.turn ?? 0)} opens.`,
@@ -264,9 +268,33 @@ export class Room {
     this.match = newMatch(this.rules, cryptoRng());
     this.startedAt = new Date();
     this.recorded = false;
+    this.smashedThisRound = false;
     this.log = [];
     this.pushLog(`Rematch to ${this.rules.targetScore}.`);
     this.armTimer();
+  }
+
+  /** May this seat slam the table right now? */
+  private maySmash(seat: Seat | null): boolean {
+    const match = this.match;
+    if (seat === null || match === null || this.smashedThisRound) return false;
+    const result = match.lastResult;
+    if (result === null || !result.capicu) return false;
+    if (match.phase !== 'roundOver' && match.phase !== 'matchOver') return false;
+    return result.winningTeam === teamOf(seat);
+  }
+
+  /** Slam the table. Earned only by taking the round with a capicú. */
+  smash(player: Player): void {
+    if (!this.maySmash(player.seat)) {
+      throw new RuleError('a smash is earned by taking the round with a capicú');
+    }
+    this.smashedThisRound = true;
+    this.pushLog(`${player.name} slammed the table!`);
+    const payload = { t: 'smashed', by: player.seat, name: player.name };
+    for (const p of this.players.values()) {
+      if (p.socket !== null) this.send(p, payload);
+    }
   }
 
   /**
@@ -427,6 +455,7 @@ export class Room {
       lastResult: match?.lastResult ?? null,
       winner: match?.winner ?? null,
       drawn: match?.drawn ?? false,
+      smashReady: this.maySmash(seat),
       log: this.log,
       turnDeadline: match?.phase === 'playing' ? this.turnDeadline : null,
       spectators,

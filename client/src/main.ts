@@ -86,16 +86,22 @@ let pending: { tile: TileId; end: End } | null = null;
 /** Tile to shake because the server just refused it. */
 let rejected: TileId | null = null;
 let muted = recall('domino.muted') === '1';
+/** How the chain is drawn. A local taste, not a table rule. */
+let layout: Layout = recall('domino.layout') === 'square' ? 'square' : 'snake';
+/** True once somebody has slammed this table; cleared on the next deal. */
+let messy = false;
 let claimNotice = '';
 
 let lastPhase: string | null = null;
+/** Who just slammed the table, shown briefly as a banner. */
+let smashedBy: string | null = null;
 
 /**
  * Small synthesised blips. No audio files to ship, and nothing plays until
  * the viewer has interacted, which browsers require anyway.
  */
 let audio: AudioContext | null = null;
-function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win'): void {
+function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win' | 'smash'): void {
   if (muted) return;
   try {
     const Ctor =
@@ -111,6 +117,7 @@ function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win'): void {
       wrong: [90, 0.18, 'sawtooth'],
       round: [440, 0.16, 'triangle'],
       win: [660, 0.3, 'triangle'],
+      smash: [70, 0.45, 'square'],
     };
     const [freq, dur, type] = notes[kind];
     const osc = audio.createOscillator();
@@ -118,8 +125,12 @@ function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win'): void {
     osc.type = type;
     osc.frequency.setValueAtTime(freq, audio.currentTime);
     if (kind === 'win') osc.frequency.exponentialRampToValueAtTime(freq * 2, audio.currentTime + dur);
+    // A slam drops in pitch like something heavy landing.
+    if (kind === 'smash') {
+      osc.frequency.exponentialRampToValueAtTime(28, audio.currentTime + dur);
+    }
     gain.gain.setValueAtTime(0.0001, audio.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.18, audio.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(kind === 'smash' ? 0.42 : 0.18, audio.currentTime + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + dur);
     osc.connect(gain).connect(audio.destination);
     osc.start();
@@ -230,8 +241,22 @@ function onMessage(msg: ServerMessage): void {
     case 'authed':
       if (msg.ok) void refreshAccount();
       break;
+    case 'smashed':
+      messy = true;
+      sfx('smash');
+      document.body.classList.add('shaking');
+      window.setTimeout(() => document.body.classList.remove('shaking'), 650);
+      smashedBy = msg.name;
+      window.setTimeout(() => {
+        smashedBy = null;
+        render();
+      }, 2600);
+      break;
     case 'pong':
       return;
+  }
+  if (msg.t === 'state' && msg.view.phase === 'playing' && lastPhase !== 'playing') {
+    messy = false;
   }
   if (msg.t === 'state' && msg.view.phase !== lastPhase) {
     if (msg.view.phase === 'matchOver') {
@@ -255,6 +280,20 @@ function myTurn(): boolean {
 
 function teamClass(seat: Seat): string {
   return teamOf(seat) === 0 ? 'teamA' : 'teamB';
+}
+
+/**
+ * Knock a tile askew. Derived from the tile's own id so the mess holds still
+ * between renders instead of twitching on every state update.
+ */
+function applyMess(node: HTMLElement, id: TileId): void {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  const angle = ((hash % 29) - 14) * 1.15;
+  const dx = (((hash >> 5) % 17) - 8) * 0.9;
+  const dy = (((hash >> 9) % 13) - 6) * 0.9;
+  node.style.transform = `translate(${dx}px, ${dy}px) rotate(${angle}deg)`;
+  node.style.zIndex = String(hash % 7);
 }
 
 /**
@@ -685,6 +724,16 @@ function renderTopbar(v: PlayerView): HTMLElement {
   score.appendChild(el('span', undefined, ` to ${v.rules.targetScore}`));
   bar.appendChild(score);
 
+  const shape = el('button', 'iconbtn', layout === 'square' ? '⬛' : '〰️') as HTMLButtonElement;
+  shape.title = layout === 'square' ? 'Square layout' : 'Snaking layout';
+  shape.setAttribute('aria-label', 'Change how the chain is laid out');
+  shape.addEventListener('click', () => {
+    layout = layout === 'snake' ? 'square' : 'snake';
+    remember('domino.layout', layout);
+    render();
+  });
+  bar.appendChild(shape);
+
   const sound = el('button', 'iconbtn', muted ? '🔇' : '🔊') as HTMLButtonElement;
   sound.title = muted ? 'Sound off' : 'Sound on';
   sound.setAttribute('aria-label', muted ? 'Turn sound on' : 'Turn sound off');
@@ -746,6 +795,8 @@ const TILE_SHORT = 40;
 const TILE_LONG = 78;
 const TILE_GAP = 3;
 
+export type Layout = 'snake' | 'square';
+
 /**
  * Shrink the tiles as the chain grows so the whole board keeps fitting on
  * screen. Twenty-eight full-size tiles would be several screens wide.
@@ -757,35 +808,131 @@ function chainScale(count: number): number {
   return 0.58;
 }
 
+/** Roughly how much height the board area has, for the square layout. */
+function boardHeight(): number {
+  return Math.max(170, Math.min(520, window.innerHeight - 350));
+}
+
+type Placed = PlayerView['board'][number];
+
 /**
  * Fold the chain into rows that fit the screen, each running the opposite way
  * to the one above — the way a real chain snakes back across a table.
  */
-function foldChain(
-  board: readonly PlayerView['board'][number][],
-  scale: number,
-  available: number,
-): (typeof board)[] {
+function foldChain(board: readonly Placed[], scale: number, available: number): Placed[][] {
   const short = TILE_SHORT * scale + TILE_GAP;
   const long = TILE_LONG * scale + TILE_GAP;
-  const rows: (typeof board)[number][][] = [[]];
+  const rows: Placed[][] = [[]];
   let used = 0;
   for (const placed of board) {
     const width = placed.left === placed.right ? short : long;
-    const row = rows[rows.length - 1] as (typeof board)[number][];
+    const row = rows[rows.length - 1] as Placed[];
     if (used + width > available && row.length > 0) {
       rows.push([]);
       used = 0;
     }
-    (rows[rows.length - 1] as (typeof board)[number][]).push(placed);
+    (rows[rows.length - 1] as Placed[]).push(placed);
     used += width;
   }
-  return rows as (typeof board)[];
+  return rows;
+}
+
+interface Spot {
+  readonly tile: Placed;
+  readonly x: number;
+  readonly y: number;
+  readonly vertical: boolean;
+  readonly flipped: boolean;
+}
+
+/**
+ * Walk the chain around a rectangle: right along the top, down the side, back
+ * along the bottom, up the other side, turning inward if it runs the whole way
+ * round. The same path a long chain takes on a real table.
+ */
+function squareChain(
+  board: readonly Placed[],
+  scale: number,
+  width: number,
+  height: number,
+): { spots: Spot[]; width: number; height: number } {
+  const short = TILE_SHORT * scale;
+  const long = TILE_LONG * scale;
+  const step = TILE_GAP;
+
+  const spots: Spot[] = [];
+  // 0 right, 1 down, 2 left, 3 up.
+  let dir = 0;
+  let x = 0;
+  let y = 0;
+  let bound = { left: 0, top: 0, right: width, bottom: height };
+  let maxX = 0;
+  let maxY = 0;
+
+  for (const placed of board) {
+    const isDouble = placed.left === placed.right;
+    const vertical = dir === 1 || dir === 3;
+    const along = isDouble ? short : long;
+    const across = isDouble ? long : short;
+    const w = vertical ? across : along;
+    const h = vertical ? along : across;
+
+    // Turn a corner when this tile would leave the box.
+    for (let turns = 0; turns < 4; turns++) {
+      const fitsHere =
+        dir === 0
+          ? x + w <= bound.right
+          : dir === 1
+            ? y + h <= bound.bottom
+            : dir === 2
+              ? x >= bound.left
+              : y >= bound.top;
+      if (fitsHere) break;
+      dir = (dir + 1) % 4;
+      if (dir === 0) {
+        // A full lap: step inward so the chain spirals rather than overlapping.
+        bound = {
+          left: bound.left + long * 0.9,
+          top: bound.top + long * 0.9,
+          right: bound.right - long * 0.9,
+          bottom: bound.bottom - long * 0.9,
+        };
+        x = bound.left;
+        y = bound.top;
+      }
+    }
+
+    const vNow = dir === 1 || dir === 3;
+    const aw = vNow ? (isDouble ? long : short) : isDouble ? short : long;
+    const ah = vNow ? (isDouble ? short : long) : isDouble ? long : short;
+    if (dir === 2) x -= aw;
+    if (dir === 3) y -= ah;
+
+    // Running down the right side or back along the bottom, the cursor sits
+    // wherever the previous leg left it, which can hang outside the box. Keep
+    // every tile inside its bounds; a slight overlap at a corner is far better
+    // than a tile sliced off at the edge of the screen.
+    const px = Math.min(Math.max(x, bound.left), Math.max(bound.left, bound.right - aw));
+    const py = Math.min(Math.max(y, bound.top), Math.max(bound.top, bound.bottom - ah));
+    x = px;
+    y = py;
+
+    spots.push({ tile: placed, x, y, vertical: vNow, flipped: dir === 2 || dir === 3 });
+    maxX = Math.max(maxX, x + aw);
+    maxY = Math.max(maxY, y + ah);
+
+    if (dir === 0) x += aw + step;
+    else if (dir === 1) y += ah + step;
+    else if (dir === 2) x -= step;
+    else y -= step;
+  }
+
+  return { spots, width: maxX, height: maxY };
 }
 
 function renderTable(v: PlayerView): HTMLElement {
   const box = el('div', 'table');
-  const chain = el('div', 'chain');
+  const chain = el('div', `chain${messy ? ' messy' : ''}`);
   const playing = v.youMayMove;
 
   if (v.board.length === 0) {
@@ -804,9 +951,10 @@ function renderTable(v: PlayerView): HTMLElement {
   const scale = chainScale(v.board.length);
   chain.style.setProperty('--tile-scale', String(scale));
 
-  // Leave room for the two end slots, which sit at either tip of the snake.
   const gutter = 32;
-  const slots = playing ? 2 * (34 * scale + TILE_GAP) : 0;
+  // In the square layout the end slots sit on their own row beneath the ring,
+  // so they do not eat into the width the chain can use.
+  const slots = playing && layout === 'snake' ? 2 * (34 * scale + TILE_GAP) : 0;
   const available = Math.max(140, Math.min(window.innerWidth, 920) - gutter - slots);
 
   const ids = v.board.map((b) => b.id);
@@ -814,13 +962,42 @@ function renderTable(v: PlayerView): HTMLElement {
   const grewLeft = ids.length > lastBoard.length && !grewRight;
   const freshId = grewRight ? ids[ids.length - 1] : grewLeft ? ids[0] : null;
 
+  if (layout === 'square') {
+    // Keep it roughly square rather than a tall thin loop.
+    const side = Math.min(available, boardHeight());
+    const plan = squareChain(v.board, scale, available, side);
+    const pitch = el('div', 'pitch');
+    pitch.style.width = `${Math.max(plan.width, 1)}px`;
+    pitch.style.height = `${Math.max(plan.height, 1)}px`;
+    for (const spot of plan.spots) {
+      const node = boardTile(spot.tile, spot.tile.id === freshId, spot.flipped, spot.vertical);
+      node.style.left = `${spot.x}px`;
+      node.style.top = `${spot.y}px`;
+      if (messy) applyMess(node, spot.tile.id);
+      pitch.appendChild(node);
+    }
+    chain.appendChild(pitch);
+    if (playing) {
+      const ends = el('div', 'endrow');
+      ends.appendChild(endSlot(v, 'left'));
+      ends.appendChild(el('span', 'endlabel', 'open ends'));
+      ends.appendChild(endSlot(v, 'right'));
+      chain.appendChild(ends);
+    }
+    box.appendChild(chain);
+    lastBoard = ids;
+    return box;
+  }
+
   const rows = foldChain(v.board, scale, available);
   rows.forEach((tiles, index) => {
     const reversed = index % 2 === 1;
     const row = el('div', `chainrow${reversed ? ' reverse' : ''}`);
     if (index === 0 && playing) row.appendChild(endSlot(v, 'left'));
     for (const placed of tiles) {
-      row.appendChild(boardTile(placed, placed.id === freshId, reversed));
+      const node = boardTile(placed, placed.id === freshId, reversed);
+      if (messy) applyMess(node, placed.id);
+      row.appendChild(node);
     }
     if (index === rows.length - 1 && playing) row.appendChild(endSlot(v, 'right'));
     chain.appendChild(row);
@@ -1027,6 +1204,17 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
   }
 
   const actions = el('div', 'actions');
+  if (v.smashReady) {
+    const smash = el('button', 'smashbtn', '💥  SMASH THE TABLE') as HTMLButtonElement;
+    smash.addEventListener('click', () => {
+      smash.disabled = true;
+      net.send({ t: 'smash' });
+    });
+    actions.appendChild(smash);
+    actions.appendChild(
+      el('span', 'hint', 'You took it with a capicú. Slam the tiles and make a mess of them.'),
+    );
+  }
   if (v.phase === 'roundOver' && v.you !== null) {
     const next = el('button', 'gold', 'Deal the next round') as HTMLButtonElement;
     next.addEventListener('click', () => net.send({ t: 'nextRound' }));
@@ -1056,6 +1244,9 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
 function renderGame(v: PlayerView): HTMLElement {
   const wrap = el('div', 'game');
   wrap.appendChild(renderTopbar(v));
+  if (smashedBy !== null) {
+    wrap.appendChild(el('div', 'smashbanner', `💥  ${smashedBy} slammed the table!`));
+  }
   wrap.appendChild(renderOpponents(v));
   wrap.appendChild(renderTable(v));
   wrap.appendChild(renderStatus(v));
@@ -1066,7 +1257,9 @@ function renderGame(v: PlayerView): HTMLElement {
   }
   wrap.appendChild(renderHand(v));
   wrap.appendChild(renderLog(v));
-  const overlay = renderOverlay(v);
+  // While the table is being slammed, get the result sheet out of the way so
+  // everyone can actually watch the tiles scatter.
+  const overlay = smashedBy === null ? renderOverlay(v) : null;
   if (overlay !== null) wrap.appendChild(overlay);
   return wrap;
 }

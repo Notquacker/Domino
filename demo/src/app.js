@@ -23,11 +23,35 @@
     match: null,
     solo: false,
     selected: null,
-    refused: null
+    refused: null,
+    layout: 'snake',
+    messy: false,
+    smashed: false,
+    banner: null
   };
 
   var root = document.getElementById('app');
   var lastBoard = [];
+
+  /** A low thump for the slam. No audio files. */
+  function sfx() {
+    try {
+      var Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return;
+      var ctx = sfx.ctx || (sfx.ctx = new Ctor());
+      if (ctx.state === 'suspended') ctx.resume();
+      var osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(70, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(28, ctx.currentTime + 0.45);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.42, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.45);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+    } catch (e) { /* sound is a nicety */ }
+  }
 
   /* ---------- tiny DOM helpers ---------- */
   function el(tag, cls, text) {
@@ -53,10 +77,64 @@
    * read continuously along the snake. Swapping beats mirroring with a
    * transform, which would fight the drop animation.
    */
-  function boardTile(p, fresh, flipped) {
+  function boardTile(p, fresh, flipped, runsVertically) {
     var near = flipped ? p.right : p.left;
     var far = flipped ? p.left : p.right;
-    return tileNode(near, far, p.left === p.right, 'board' + (fresh ? ' fresh' : ''));
+    var isDouble = p.left === p.right;
+    // A tile lies across the run; a double lies along it. Turning the chain
+    // swaps both, which is exactly XOR.
+    return tileNode(near, far, isDouble !== !!runsVertically, 'board' + (fresh ? ' fresh' : ''));
+  }
+
+  /** Knock a tile askew, deterministically so the mess holds still. */
+  function applyMess(node, id) {
+    var h = 0;
+    for (var i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+    node.style.transform = 'translate(' + ((((h >> 5) % 17) - 8) * 0.9) + 'px,' +
+      ((((h >> 9) % 13) - 6) * 0.9) + 'px) rotate(' + (((h % 29) - 14) * 1.15) + 'deg)';
+    node.style.zIndex = String(h % 7);
+  }
+
+  function boardHeight() {
+    return Math.max(170, Math.min(520, window.innerHeight - 330));
+  }
+
+  /** Walk the chain around a rectangle, turning inward if it laps. */
+  function squareChain(board, scale, width, height) {
+    var shortS = TILE_SHORT * scale, longS = TILE_LONG * scale, step = TILE_GAP;
+    var spots = [], dir = 0, x = 0, y = 0, maxX = 0, maxY = 0;
+    var bound = { left: 0, top: 0, right: width, bottom: height };
+    board.forEach(function (p) {
+      var isDouble = p.left === p.right;
+      for (var turns = 0; turns < 4; turns++) {
+        var vert = dir === 1 || dir === 3;
+        var w = vert ? (isDouble ? longS : shortS) : (isDouble ? shortS : longS);
+        var h = vert ? (isDouble ? shortS : longS) : (isDouble ? longS : shortS);
+        var ok = dir === 0 ? x + w <= bound.right
+          : dir === 1 ? y + h <= bound.bottom
+          : dir === 2 ? x >= bound.left : y >= bound.top;
+        if (ok) break;
+        dir = (dir + 1) % 4;
+        if (dir === 0) {
+          bound = { left: bound.left + longS * 0.9, top: bound.top + longS * 0.9,
+            right: bound.right - longS * 0.9, bottom: bound.bottom - longS * 0.9 };
+          x = bound.left; y = bound.top;
+        }
+      }
+      var vNow = dir === 1 || dir === 3;
+      var aw = vNow ? (isDouble ? longS : shortS) : (isDouble ? shortS : longS);
+      var ah = vNow ? (isDouble ? shortS : longS) : (isDouble ? longS : shortS);
+      if (dir === 2) x -= aw;
+      if (dir === 3) y -= ah;
+      // Keep every tile inside the box; a corner overlap beats a sliced edge.
+      x = Math.min(Math.max(x, bound.left), Math.max(bound.left, bound.right - aw));
+      y = Math.min(Math.max(y, bound.top), Math.max(bound.top, bound.bottom - ah));
+      spots.push({ tile: p, x: x, y: y, vertical: vNow, flipped: dir === 2 || dir === 3 });
+      maxX = Math.max(maxX, x + aw); maxY = Math.max(maxY, y + ah);
+      if (dir === 0) x += aw + step; else if (dir === 1) y += ah + step;
+      else if (dir === 2) x -= step; else y -= step;
+    });
+    return { spots: spots, width: maxX, height: maxY };
   }
   function handTile(id, state) {
     var t = D.parseTile(id), n = tileNode(t.low, t.high, true, 'inhand ' + state);
@@ -109,6 +187,9 @@
   }
   function deal() {
     S.match = D.newMatch(S.rules, Math.random);
+    S.messy = false;
+    S.smashed = false;
+    S.banner = null;
     lastBoard = [];
     S.selected = null;
     S.screen = S.solo ? 'table' : 'handoff';
@@ -116,6 +197,8 @@
   }
   function nextRound() {
     S.match = D.startNextRound(S.match, Math.random);
+    S.messy = false;
+    S.smashed = false;
     lastBoard = [];
     S.selected = null;
     S.screen = S.solo ? 'table' : 'handoff';
@@ -250,6 +333,14 @@
     line.appendChild(b);
     line.appendChild(el('small', null, 'to ' + S.rules.targetScore));
     bar.appendChild(line);
+    var shape = el('button', 'iconbtn', S.layout === 'square' ? '⬛' : '〰️');
+    shape.title = 'Change how the chain is laid out';
+    shape.addEventListener('click', function () {
+      S.layout = S.layout === 'snake' ? 'square' : 'snake';
+      render();
+    });
+    bar.appendChild(shape);
+
     var right = el('div', 'right');
     right.appendChild(el('div', null, 'Round ' + S.match.roundNumber));
     bar.appendChild(right);
@@ -309,7 +400,7 @@
 
   function renderTable() {
     var box = el('div', 'table');
-    var chain = el('div', 'chain');
+    var chain = el('div', 'chain' + (S.messy ? ' messy' : ''));
     var board = round().board;
     var isPlaying = playing();
 
@@ -323,7 +414,7 @@
     var scale = chainScale(board.length);
     chain.style.setProperty('--tile-scale', String(scale));
 
-    var slots = isPlaying ? 2 * (34 * scale + TILE_GAP) : 0;
+    var slots = isPlaying && S.layout === 'snake' ? 2 * (34 * scale + TILE_GAP) : 0;
     var available = Math.max(140, Math.min(window.innerWidth, 920) - 32 - slots);
 
     var ids = board.map(function (b) { return b.id; });
@@ -331,13 +422,41 @@
     var grewLeft = ids.length > lastBoard.length && !grewRight;
     var freshId = grewRight ? ids[ids.length - 1] : (grewLeft ? ids[0] : null);
 
+    if (S.layout === 'square') {
+      var side = Math.min(available, boardHeight());
+      var plan = squareChain(board, scale, available, side);
+      var pitch = el('div', 'pitch');
+      pitch.style.width = Math.max(plan.width, 1) + 'px';
+      pitch.style.height = Math.max(plan.height, 1) + 'px';
+      plan.spots.forEach(function (sp) {
+        var node = boardTile(sp.tile, sp.tile.id === freshId, sp.flipped, sp.vertical);
+        node.style.left = sp.x + 'px';
+        node.style.top = sp.y + 'px';
+        if (S.messy) applyMess(node, sp.tile.id);
+        pitch.appendChild(node);
+      });
+      chain.appendChild(pitch);
+      if (isPlaying) {
+        var ends = el('div', 'endrow');
+        ends.appendChild(endSlot('left'));
+        ends.appendChild(el('span', 'endlabel', 'open ends'));
+        ends.appendChild(endSlot('right'));
+        chain.appendChild(ends);
+      }
+      box.appendChild(chain);
+      lastBoard = ids;
+      return box;
+    }
+
     var rows = foldChain(board, scale, available);
     rows.forEach(function (tiles, index) {
       var reversed = index % 2 === 1;
       var row = el('div', 'chainrow' + (reversed ? ' reverse' : ''));
       if (index === 0 && isPlaying) row.appendChild(endSlot('left'));
       tiles.forEach(function (p) {
-        row.appendChild(boardTile(p, p.id === freshId, reversed));
+        var node = boardTile(p, p.id === freshId, reversed, false);
+        if (S.messy) applyMess(node, p.id);
+        row.appendChild(node);
       });
       if (index === rows.length - 1 && isPlaying) row.appendChild(endSlot('right'));
       chain.appendChild(row);
@@ -465,6 +584,23 @@
     }
 
     var actions = el('div', 'actions');
+    if (r && r.capicu && !S.smashed) {
+      var smash = el('button', 'smashbtn', '💥  SMASH THE TABLE');
+      smash.addEventListener('click', function () {
+        S.smashed = true;
+        S.messy = true;
+        sfx();
+        document.body.className += ' shaking';
+        setTimeout(function () {
+          document.body.className = document.body.className.replace(/ ?shaking/, '');
+        }, 650);
+        S.banner = (S.names[r.dominoedBy] || 'Someone') + ' slammed the table!';
+        render();
+        setTimeout(function () { S.banner = null; render(); }, 2600);
+      });
+      actions.appendChild(smash);
+      actions.appendChild(el('span', 'hint', 'A capicú earns a slam. Make a mess of them.'));
+    }
     if (phase === 'roundOver') {
       var next = el('button', 'gold', 'Deal the next round');
       next.addEventListener('click', nextRound);
@@ -488,12 +624,15 @@
     if (S.screen === 'setup' || !S.match) { root.appendChild(renderSetup()); return; }
 
     root.appendChild(renderTop());
+    if (S.banner) root.appendChild(el('div', 'smashbanner', '💥  ' + S.banner));
     root.appendChild(renderOpps());
     root.appendChild(renderTable());
     root.appendChild(renderStatus());
     root.appendChild(renderHand());
 
-    var result = renderResult();
+    // While the table is being slammed, get the sheet out of the way so the
+    // mess is actually visible.
+    var result = S.banner ? null : renderResult();
     if (result) { root.appendChild(result); return; }
     if (S.screen === 'handoff') root.appendChild(renderHandoff());
   }
