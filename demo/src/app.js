@@ -24,6 +24,8 @@
     solo: false,
     selected: null,
     refused: null,
+    dragTile: null,
+    dragOver: null,
     layout: 'snake',
     messy: false,
     smashed: false,
@@ -32,6 +34,7 @@
 
   var root = document.getElementById('app');
   var lastBoard = [];
+  var dragGhost = null;
 
   /** A low thump for the slam. No audio files. */
   function sfx() {
@@ -133,6 +136,65 @@
       setTimeout(function () { S.refused = null; render(); }, 600);
     }
   }
+  /** Which drop zone, if any, is under this point. */
+  function zoneAt(x, y) {
+    var zones = document.querySelectorAll('.dropzone');
+    for (var i = 0; i < zones.length; i++) {
+      var r = zones[i].getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        return zones[i].getAttribute('data-end');
+      }
+    }
+    return null;
+  }
+
+  function clearDrag() {
+    S.dragTile = null;
+    S.dragOver = null;
+    if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+  }
+
+  /**
+   * Drag a tile out of the hand and drop it on an end. A press that never
+   * travels stays a tap, so the pick-then-tap flow still works.
+   */
+  function beginDrag(id, ev, onTap) {
+    if (!playing() || ev.button > 0) return;
+    var startX = ev.clientX, startY = ev.clientY, dragging = false;
+    function move(e) {
+      if (!dragging) {
+        if (Math.hypot(e.clientX - startX, e.clientY - startY) < 8) return;
+        dragging = true;
+        S.dragTile = id;
+        S.selected = null;
+        dragGhost = handTile(id, 'sel');
+        dragGhost.className += ' ghost';
+        dragGhost.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(dragGhost);
+        render();
+      }
+      if (dragGhost) { dragGhost.style.left = e.clientX + 'px'; dragGhost.style.top = e.clientY + 'px'; }
+      var over = zoneAt(e.clientX, e.clientY);
+      if (over !== S.dragOver) { S.dragOver = over; render(); }
+    }
+    function finish(e) {
+      detach();
+      if (!dragging) { onTap(); return; }
+      var end = zoneAt(e.clientX, e.clientY);
+      clearDrag();
+      if (end) play(id, end); else render();
+    }
+    function cancel() { detach(); clearDrag(); render(); }
+    function detach() {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', cancel);
+    }
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', cancel);
+  }
+
   function pass() {
     try {
       S.match = D.applyMove(S.match, turn(), { kind: 'pass' }).match;
@@ -145,6 +207,7 @@
     }
   }
   function deal() {
+    clearDrag();
     S.match = D.newMatch(S.rules, Math.random);
     S.messy = false;
     S.smashed = false;
@@ -155,6 +218,7 @@
     render();
   }
   function nextRound() {
+    clearDrag();
     S.match = D.startNextRound(S.match, Math.random);
     S.messy = false;
     S.smashed = false;
@@ -468,15 +532,19 @@
     });
     chain.appendChild(pitch);
 
-    if (isPlaying) {
-      var ends = el('div', 'endrow');
-      ends.appendChild(endSlot('left'));
-      ends.appendChild(el('span', 'endlabel', 'open ends'));
-      ends.appendChild(endSlot('right'));
-      chain.appendChild(ends);
-    }
-
     box.appendChild(chain);
+
+    // While a tile is in the air, the whole table becomes two targets.
+    if (S.dragTile && isPlaying) {
+      var e2 = D.openEnds(board);
+      ['left', 'right'].forEach(function (side) {
+        var zone = el('div', 'dropzone ' + side + (S.dragOver === side ? ' over' : ''));
+        zone.setAttribute('data-end', side);
+        zone.appendChild(el('span', 'zonelabel', side === 'left' ? 'LEFT' : 'RIGHT'));
+        zone.appendChild(el('span', 'zonepip', String(side === 'left' ? e2.left : e2.right)));
+        box.appendChild(zone);
+      });
+    }
     lastBoard = ids;
     return box;
   }
@@ -492,6 +560,18 @@
 
   function renderHand() {
     var zone = el('div', 'handzone');
+
+    // The open ends sit down here by the hand, not out on the table.
+    var bd = round().board;
+    if (bd.length) {
+      var ends = D.openEnds(bd);
+      var bar = el('div', 'endsbar');
+      bar.appendChild(endSlot('left'));
+      bar.appendChild(el('span', 'endlabel', 'open ends'));
+      bar.appendChild(endSlot('right'));
+      zone.appendChild(bar);
+    }
+
     var hand = el('div', 'hand');
     var tiles = round().hands[turn()];
 
@@ -506,7 +586,10 @@
         S.selected = S.selected === id ? null : id;
         render();
       };
-      node.addEventListener('click', act);
+      node.addEventListener('pointerdown', function (ev) {
+        ev.preventDefault();
+        beginDrag(id, ev, act);
+      });
       node.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); }
       });
@@ -518,7 +601,8 @@
     if (playing()) {
       bar.appendChild(el('span', 'hint',
         round().board.length === 0 ? 'Tap a tile to lead.'
-          : S.selected ? 'Tap the end you want.' : 'Pick a tile, then an end.'));
+          : S.selected ? 'Tap the end you want.'
+          : 'Drag a tile to an end — or tap it, then tap an end.'));
       if (S.selected) {
         var c = el('button', 'ghost small', 'Cancel');
         c.addEventListener('click', function () { S.selected = null; render(); });

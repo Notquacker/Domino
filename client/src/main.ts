@@ -85,6 +85,11 @@ let connectAttempts = 0;
 let pending: { tile: TileId; end: End } | null = null;
 /** Tile to shake because the server just refused it. */
 let rejected: TileId | null = null;
+/** Tile currently being dragged out of the hand, if any. */
+let dragTile: TileId | null = null;
+/** Which drop zone the finger is over while dragging. */
+let dragOver: End | null = null;
+let dragGhost: HTMLElement | null = null;
 let muted = recall('domino.muted') === '1';
 /** How the chain is drawn. A local taste, not a table rule. */
 let layout: Layout = recall('domino.layout') === 'square' ? 'square' : 'snake';
@@ -257,6 +262,7 @@ function onMessage(msg: ServerMessage): void {
   }
   if (msg.t === 'state' && msg.view.phase === 'playing' && lastPhase !== 'playing') {
     messy = false;
+    clearDrag();
   }
   if (msg.t === 'state' && msg.view.phase !== lastPhase) {
     if (msg.view.phase === 'matchOver') {
@@ -305,6 +311,87 @@ function play(tile: TileId, end: End): void {
   selected = null;
   sfx('place');
   net.send({ t: 'move', move: { kind: 'play', tile, end } });
+}
+
+/** Which drop zone, if any, is under this point. */
+function zoneAt(x: number, y: number): End | null {
+  for (const node of document.querySelectorAll('.dropzone')) {
+    const r = node.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+      return (node as HTMLElement).dataset['end'] === 'left' ? 'left' : 'right';
+    }
+  }
+  return null;
+}
+
+function clearDrag(): void {
+  dragTile = null;
+  dragOver = null;
+  dragGhost?.remove();
+  dragGhost = null;
+}
+
+/**
+ * Drag a tile out of the hand and drop it on an end.
+ *
+ * Pointer events cover touch and mouse together. A press that never travels
+ * stays a tap, so the pick-a-tile-then-an-end flow still works for anyone who
+ * prefers it, and for keyboards.
+ */
+function beginDrag(id: TileId, ev: PointerEvent, onTap: () => void): void {
+  if (!myTurn() || ev.button > 0) return;
+  const startX = ev.clientX;
+  const startY = ev.clientY;
+  let dragging = false;
+
+  const move = (e: PointerEvent): void => {
+    if (!dragging) {
+      if (Math.hypot(e.clientX - startX, e.clientY - startY) < 8) return;
+      dragging = true;
+      dragTile = id;
+      selected = null;
+      dragGhost = handTile(id, 'sel');
+      dragGhost.classList.add('ghost');
+      dragGhost.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(dragGhost);
+      render();
+    }
+    if (dragGhost !== null) {
+      dragGhost.style.left = `${e.clientX}px`;
+      dragGhost.style.top = `${e.clientY}px`;
+    }
+    const over = zoneAt(e.clientX, e.clientY);
+    if (over !== dragOver) {
+      dragOver = over;
+      render();
+    }
+  };
+
+  const finish = (e: PointerEvent): void => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', finish);
+    window.removeEventListener('pointercancel', cancel);
+    if (!dragging) {
+      onTap();
+      return;
+    }
+    const end = zoneAt(e.clientX, e.clientY);
+    clearDrag();
+    if (end !== null) play(id, end);
+    else render();
+  };
+
+  const cancel = (): void => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', finish);
+    window.removeEventListener('pointercancel', cancel);
+    clearDrag();
+    render();
+  };
+
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', finish);
+  window.addEventListener('pointercancel', cancel);
 }
 
 function pass(): void {
@@ -1026,15 +1113,19 @@ function renderTable(v: PlayerView): HTMLElement {
   }
   chain.appendChild(pitch);
 
-  if (playing) {
-    const ends = el('div', 'endrow');
-    ends.appendChild(endSlot(v, 'left'));
-    ends.appendChild(el('span', 'endlabel', 'open ends'));
-    ends.appendChild(endSlot(v, 'right'));
-    chain.appendChild(ends);
-  }
-
   box.appendChild(chain);
+
+  // While a tile is in the air, the whole table becomes two targets.
+  if (dragTile !== null && v.ends !== null) {
+    for (const end of ['left', 'right'] as End[]) {
+      const pip = end === 'left' ? v.ends.left : v.ends.right;
+      const zone = el('div', `dropzone ${end}${dragOver === end ? ' over' : ''}`);
+      zone.dataset['end'] = end;
+      zone.appendChild(el('span', 'zonelabel', end === 'left' ? 'LEFT' : 'RIGHT'));
+      zone.appendChild(el('span', 'zonepip', String(pip)));
+      box.appendChild(zone);
+    }
+  }
   lastBoard = ids;
   return box;
 }
@@ -1063,6 +1154,19 @@ function renderStatus(v: PlayerView): HTMLElement {
 
 function renderHand(v: PlayerView): HTMLElement {
   const zone = el('div', 'handzone');
+
+  // The open ends sit down here by the hand rather than out on the table,
+  // where they pushed the board around and sat far from the tiles.
+  if (v.ends !== null) {
+    // Left end on the left, right end on the right, so the position means
+    // the same thing here as it does on the board.
+    const bar = el('div', 'endsbar');
+    bar.appendChild(endSlot(v, 'left'));
+    bar.appendChild(el('span', 'endlabel', 'open ends'));
+    bar.appendChild(endSlot(v, 'right'));
+    zone.appendChild(bar);
+  }
+
   const hand = el('div', 'hand');
 
   if (v.hand.length === 0) {
@@ -1085,7 +1189,11 @@ function renderHand(v: PlayerView): HTMLElement {
         selected = selected === id ? null : id;
         render();
       };
-      node.addEventListener('click', activate);
+      // A drag plays the tile; a press that never moves is still a tap.
+      node.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault();
+        beginDrag(id, ev as PointerEvent, activate);
+      });
       node.addEventListener('keydown', (ev) => {
         const key = (ev as KeyboardEvent).key;
         if (key === 'Enter' || key === ' ') {
@@ -1112,7 +1220,13 @@ function renderHand(v: PlayerView): HTMLElement {
       bar.appendChild(cancel);
     } else {
       bar.appendChild(
-        el('span', 'hint', v.board.length === 0 ? 'Tap a tile to lead.' : 'Pick a tile, then an end.'),
+        el(
+          'span',
+          'hint',
+          v.board.length === 0
+            ? 'Tap a tile to lead.'
+            : 'Drag a tile to an end — or tap it, then tap an end.',
+        ),
       );
     }
     // Passing is always allowed — and always a risk, since passing on a tile
