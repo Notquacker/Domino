@@ -2046,6 +2046,23 @@ function renderGame(v: PlayerView): HTMLElement {
     wrap.appendChild(box);
   }
   wrap.appendChild(renderHand(v));
+
+  // A practice game against the computer can be binned at any point. A table
+  // of real people cannot: walking out of a match you are losing is not a
+  // feature, so there is no button for it.
+  const againstBots = v.seats.some((seat) => seat?.bot === true);
+  if (againstBots && v.isHost) {
+    const row = el('div', 'cancelrow');
+    const stop = el('button', 'ghost small danger', 'Cancel this game') as HTMLButtonElement;
+    stop.addEventListener('click', () => {
+      if (!confirm('Cancel this game? The scores for it are thrown away.')) return;
+      error = '';
+      net.send({ t: 'abandon' });
+    });
+    row.appendChild(stop);
+    wrap.appendChild(row);
+  }
+
   wrap.appendChild(renderLog(v));
   // While the table is being slammed, get the result sheet out of the way so
   // everyone can actually watch the tiles scatter.

@@ -384,3 +384,75 @@ describe('the turn clock', () => {
     tiny.dispose();
   });
 });
+
+describe('cancelling a practice game', () => {
+  async function tableWithBots(bots: number) {
+    const { Room } = await import('../dist/rooms.js');
+    const room = new Room('CANCEL', { targetScore: 10 }, () => {}, null, 1);
+    const host = room.addPlayer('Ana');
+    room.sit(host, 0);
+    for (let i = 0; i < bots; i++) room.addBot(host);
+    return { room, host };
+  }
+
+  it('bins the match and goes back to the lobby', async () => {
+    const { room, host } = await tableWithBots(3);
+    room.start(host as never);
+    assert.notEqual(room.match, null, 'a match is running');
+
+    room.abandon(host as never);
+    assert.equal(room.match, null, 'back to the lobby');
+    assert.equal(room.turnDeadline, null, 'the clock stopped too');
+    // The seats are still filled, so another game can start straight away.
+    room.start(host as never);
+    assert.notEqual(room.match, null, 'a fresh match starts fine');
+    room.dispose();
+  });
+
+  it('leaves the leaderboard alone', async () => {
+    const { Room } = await import('../dist/rooms.js');
+    const credited: unknown[] = [];
+    const room = new Room(
+      'CANCEL2',
+      { targetScore: 10 },
+      () => {},
+      null,
+      1,
+      (winners, played) => credited.push({ winners, played }),
+    );
+    const host = room.addPlayer('Ana');
+    host.accountName = 'ana';
+    room.sit(host, 0);
+    for (let i = 0; i < 3; i++) room.addBot(host);
+    room.start(host as never);
+    room.abandon(host as never);
+    assert.deepEqual(credited, [], 'a cancelled game counts for nobody');
+    room.dispose();
+  });
+
+  it('refuses on a table of real players', async () => {
+    const { Room } = await import('../dist/rooms.js');
+    const room = new Room('HUMANS', { targetScore: 10 }, () => {}, null, 1);
+    const host = room.addPlayer('Ana');
+    room.sit(host, 0);
+    for (const seat of [1, 2, 3] as Seat[]) {
+      const p = room.addPlayer(`P${seat}`);
+      room.sit(p, seat);
+    }
+    room.start(host as never);
+    // Walking out of a match you are losing is not a feature.
+    assert.throws(() => room.abandon(host as never), /played out/);
+    assert.notEqual(room.match, null, 'and the match is untouched');
+    room.dispose();
+  });
+
+  it('refuses from anyone but the host', async () => {
+    const { room, host } = await tableWithBots(2);
+    const other = room.addPlayer('Bo');
+    room.sit(other, 3);
+    room.start(host as never);
+    assert.throws(() => room.abandon(other as never), /only the host/);
+    assert.notEqual(room.match, null);
+    room.dispose();
+  });
+});

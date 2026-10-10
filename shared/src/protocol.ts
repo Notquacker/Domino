@@ -94,6 +94,8 @@ export type ClientMessage =
   | { readonly t: 'smash' }
   /** Accuse an opponent of having passed while holding a playable tile. */
   | { readonly t: 'callOut'; readonly seat: Seat }
+  /** Host only, and only with a computer player at the table: bin the match. */
+  | { readonly t: 'abandon' }
   | { readonly t: 'ping' }
   // --- accounts, for the leaderboard --------------------------------------
   | { readonly t: 'register'; readonly username: string; readonly password: string }

@@ -389,6 +389,32 @@ export class Room {
   }
 
   /** Slam the table. Earned only by taking the round with a capicú. */
+  /**
+   * Throw the match away and go back to the lobby.
+   *
+   * Only on a table with a computer player at it. Abandoning a game that real
+   * people are in the middle of would be a way to wipe a losing scoreboard,
+   * so a human table has to be played out or left seat by seat.
+   */
+  abandon(player: Player): void {
+    if (this.hostId !== player.id) throw new RuleError('only the host can cancel the game');
+    if (this.match === null) throw new RuleError('no game to cancel');
+    if (!SEATS.some((s) => this.botAt(s) !== null)) {
+      throw new RuleError('a table of real players has to be played out');
+    }
+    if (this.botTimer !== null) clearTimeout(this.botTimer);
+    this.botTimer = null;
+    this.match = null;
+    this.recorded = false;
+    this.smashedThisRound = false;
+    this.voids = [[], [], [], []];
+    this.caught.clear();
+    this.startedAt = null;
+    this.log = [];
+    this.pushLog(`${player.name} cancelled the game.`);
+    this.armTimer();
+  }
+
   /** Accuse an opponent of passing on a playable tile. Ends the round. */
   callOut(player: Player, accused: Seat): void {
     const match = this.match;

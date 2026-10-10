@@ -71,6 +71,10 @@ it is practice, and counting it would inflate everyone's record.
   **smash**: slam the table and send the tiles skidding out of line until the
   next deal. The server decides who has earned one, so the button cannot be
   conjured up by a tampered client.
+- **A practice game can be cancelled.** With a computer player at the table
+  the host gets a *Cancel this game* button, which bins the match and returns
+  everyone to the lobby with the seats still filled. A table of real people
+  has no such button: walking out of a match you are losing is not a feature.
 - **A locked round goes to the single lightest hand.** When nobody can play
   and everyone still holds tiles, the round is decided on the lightest hand at
   the table, not on which team's two hands add up to less. One player sitting
@@ -157,6 +161,9 @@ and its owner is prompted to choose their own.
 which survives the container being rebuilt. Run both migrations in
 `supabase/migrations/`, then `npm run verify:supabase` to check the schema is
 applied and locked down.
+
+**[`supabase/SETUP.md`](supabase/SETUP.md) walks through it click by click**,
+including how to tell from the Render log whether it took.
 
 That table is reachable by **nobody but the server**. Row level security is on
 with no policies at all, and the grants are revoked besides, so a request
