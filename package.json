@@ -20,7 +20,8 @@
     "typecheck": "tsc -p shared && tsc -p server && tsc --noEmit -p client && tsc --noEmit -p shared/test && tsc --noEmit -p server/test",
     "test:rules": "npm run build:shared && node --test shared/test/rules.test.ts",
     "verify:supabase": "npm run build:server && node scripts/verify-supabase.mjs",
-    "build:demo": "npm run build:shared && node scripts/build-demo.mjs"
+    "build:demo": "npm run build:shared && node scripts/build-demo.mjs",
+    "check:keyboard": "node scripts/check-keyboard.mjs"
   },
   "devDependencies": {
     "concurrently": "9.1.2",

@@ -839,6 +839,24 @@
 
   /* ---------- render ---------- */
   function render() {
+    // Rebuilding the page throws away whatever input had focus, and on a
+    // phone a lost focus shuts the keyboard mid-word. Remember where the
+    // caret was and put it back once the new page is in place.
+    var active = document.activeElement;
+    var keep = (active && active.tagName === 'INPUT' && active.id)
+      ? { id: active.id, start: active.selectionStart, end: active.selectionEnd }
+      : null;
+    renderInto();
+    if (keep) {
+      var again = document.getElementById(keep.id);
+      if (again && again.tagName === 'INPUT') {
+        again.focus({ preventScroll: true });
+        try { again.setSelectionRange(keep.start, keep.end); } catch (e) { /* some types refuse */ }
+      }
+    }
+  }
+
+  function renderInto() {
     root.replaceChildren();
     if (S.screen === 'setup' || !S.match) { root.appendChild(renderSetup()); return; }
 
@@ -870,7 +888,15 @@
     render();
   }
   var resizeTimer = null;
+  var lastWidth = window.innerWidth;
   window.addEventListener('resize', function () {
+    // On a phone, opening the on-screen keyboard fires a resize: the window
+    // just gets shorter. Re-rendering on that tears out the very field being
+    // typed into, which closes the keyboard, which fires another resize — so
+    // the keyboard flickers and nothing can be entered. Only a change in
+    // WIDTH, a rotation, needs the board laid out again.
+    if (window.innerWidth === lastWidth) return;
+    lastWidth = window.innerWidth;
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () { resizeTimer = null; render(); }, 150);
   });

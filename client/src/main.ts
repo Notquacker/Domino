@@ -496,6 +496,7 @@ function renderLanding(): HTMLElement {
   const nameCard = el('div', 'card');
   nameCard.appendChild(el('h2', undefined, 'Your name'));
   const nameInput = el('input') as HTMLInputElement;
+  nameInput.id = 'yourname';
   nameInput.placeholder = 'e.g. Shon Pedro';
   nameInput.maxLength = 20;
   nameInput.value = name;
@@ -680,6 +681,7 @@ function renderLanding(): HTMLElement {
   joinCard.appendChild(el('h2', undefined, 'Join a table'));
   const joinRow = el('div', 'row');
   const codeInput = el('input', 'code-input') as HTMLInputElement;
+  codeInput.id = 'tablecode';
   codeInput.placeholder = 'CODE';
   codeInput.maxLength = 4;
   codeInput.value = formCode;
@@ -1606,10 +1608,31 @@ function renderGame(v: PlayerView): HTMLElement {
 // ---------------------------------------------------------------------------
 
 function render(): void {
+  // Rebuilding the page destroys whatever input had focus, and on a phone a
+  // lost focus closes the keyboard mid-word. Note where the caret was and put
+  // it back afterwards.
+  const active = document.activeElement;
+  const keep =
+    active instanceof HTMLInputElement && active.id !== ''
+      ? { id: active.id, start: active.selectionStart, end: active.selectionEnd }
+      : null;
+
   const v = view;
   root.replaceChildren(
     v === null ? renderLanding() : v.phase === 'lobby' ? renderLobby(v) : renderGame(v),
   );
+
+  if (keep !== null) {
+    const again = document.getElementById(keep.id);
+    if (again instanceof HTMLInputElement) {
+      again.focus({ preventScroll: true });
+      try {
+        again.setSelectionRange(keep.start ?? again.value.length, keep.end ?? again.value.length);
+      } catch {
+        // Some input types refuse a selection range; focus alone is enough.
+      }
+    }
+  }
   tickClock();
 }
 
@@ -1624,7 +1647,15 @@ function tickClock(): void {
 }
 
 let resizeTimer: number | null = null;
+let lastWidth = window.innerWidth;
 window.addEventListener('resize', () => {
+  // On a phone, opening the on-screen keyboard fires a resize: the window
+  // gets shorter. Re-rendering on that tears out the very field being typed
+  // into, which closes the keyboard, which fires another resize. Only a
+  // change in WIDTH — a rotation, or a desktop window being dragged — needs
+  // the board laid out again.
+  if (window.innerWidth === lastWidth) return;
+  lastWidth = window.innerWidth;
   if (resizeTimer !== null) window.clearTimeout(resizeTimer);
   resizeTimer = window.setTimeout(() => {
     resizeTimer = null;

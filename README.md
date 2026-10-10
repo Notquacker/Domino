@@ -103,6 +103,19 @@ Two conventions are baked in and worth confirming against how you play:
 
 Both live in `shared/src/rules.ts` and are small to change.
 
+### Typing on a phone
+
+`render()` rebuilds the page with `replaceChildren`, which destroys whatever
+input had focus. On Android the on-screen keyboard appearing **is** a window
+resize, so a naive resize handler makes the name and table-code fields
+impossible to fill in: the keyboard opens, the page re-renders, the field is
+torn out, the keyboard closes, and round it goes.
+
+Two things prevent it, and `npm run check:keyboard` (against a running server)
+checks both: a height-only resize does not re-render at all, and any render
+that does happen puts focus and the caret back. Keep both in mind before
+adding another `render()` trigger.
+
 ## Running it
 
 ```bash
