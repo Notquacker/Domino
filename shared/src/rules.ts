@@ -96,8 +96,17 @@ export interface HouseRules {
    * fact the heavier of the two.
    */
   readonly blockedByLowestPlayer: boolean;
-  /** First round of a match is opened by whoever holds the 6-6, who must play it. */
+  /** The 6-6 decides who opens, rather than the lead simply being free. */
   readonly mustOpenDoubleSix: boolean;
+  /**
+   * Whether the 6-6 decides the lead in EVERY round, or only the first.
+   *
+   * True (the default) means winning a round buys you nothing at the next
+   * deal: whoever is dealt the 6-6 opens, every time. False is the commoner
+   * tournament rule, where the 6-6 opens the match and the previous round's
+   * winner leads after that. Ignored when mustOpenDoubleSix is off.
+   */
+  readonly doubleSixOpensEveryRound: boolean;
   /**
    * Relaxes that opening. The 6-6 still decides who leads, but that player may
    * lead with whichever double they like rather than being made to lay the 6-6
@@ -152,6 +161,7 @@ export const DEFAULT_RULES: HouseRules = {
   drawAt: 5,
   blockedByLowestPlayer: true,
   mustOpenDoubleSix: true,
+  doubleSixOpensEveryRound: true,
   openWithAnyDouble: true,
   strictPassing: false,
   falsePassPenalty: 2,
@@ -372,10 +382,12 @@ export function isLegal(
 // ---------------------------------------------------------------------------
 
 /**
- * Deal a fresh round. On the opening round of a match the 6-6 decides who
- * leads; whether that player must lay the 6-6 itself or may lead with any
- * double is up to the house rules. Afterwards the previous round's winner
- * leads with any tile.
+ * Deal a fresh round.
+ *
+ * Who leads is a house rule in two parts. The 6-6 can decide it in every
+ * round or only in the first; and the player it falls to may be made to lay
+ * the 6-6 itself or allowed any double they hold. Where the 6-6 does not
+ * decide, the previous round's winner leads with any tile at all.
  */
 export function dealRound(
   rules: HouseRules,
@@ -390,7 +402,8 @@ export function dealRound(
     (hands[seat] as TileId[]).push(deck[i] as TileId);
   }
 
-  const openingRound = roundNumber === 1 && rules.mustOpenDoubleSix;
+  const openingRound =
+    rules.mustOpenDoubleSix && (roundNumber === 1 || rules.doubleSixOpensEveryRound);
   let turn: Seat;
   let opening: OpeningRequirement | null = null;
 

@@ -596,6 +596,19 @@ function renderLanding(): HTMLElement {
     el('p', 'note', 'Go out on a tile that fits both open ends and the round is worth 2 instead of 1.'),
   );
 
+  const sixEvery = el('label');
+  const sixEveryBox = el('input') as HTMLInputElement;
+  sixEveryBox.type = 'checkbox';
+  sixEveryBox.id = 'sixevery';
+  sixEveryBox.checked = true;
+  sixEveryBox.style.width = 'auto';
+  sixEvery.appendChild(sixEveryBox);
+  sixEvery.appendChild(el('span', 'grow', 'The 6-6 opens every round'));
+  rulesBox.appendChild(sixEvery);
+  rulesBox.appendChild(
+    el('p', 'note', 'Whoever is dealt the 6-6 leads, every round. Turn this off and the 6-6 only opens the match, after which the previous round\u2019s winner leads.'),
+  );
+
   const blockLow = el('label');
   const blockLowBox = el('input') as HTMLInputElement;
   blockLowBox.type = 'checkbox';
@@ -663,6 +676,7 @@ function renderLanding(): HTMLElement {
         capicuPoints: capicuBox.checked ? (pips ? 25 : 2) : 0,
         openWithAnyDouble: anyDoubleBox.checked,
         blockedByLowestPlayer: blockLowBox.checked,
+        doubleSixOpensEveryRound: sixEveryBox.checked,
         countAllRemaining: countAllBox.checked,
       },
     };

@@ -38,11 +38,16 @@ Curaçao-style partnership dominoes:
   must have been holding it at the time. Nobody has to see their hand to
   know.
 - **Somebody has to lead**, so the opening tile cannot be passed.
-- **The 6-6 decides who leads the first round** of a match. By default that
-  player may open with **any double they like**, not necessarily the 6-6
-  itself — they always hold at least one, so the lead is never stuck. Turn
-  *"the 6-6 holder may open with any double"* off to make them lay the 6-6.
-  Afterwards the previous round's winner leads with any tile.
+- **The 6-6 decides who leads — every round, not just the first.** Whoever
+  is dealt it opens, however the last round went: winning a round does not win
+  you the next lead. That player may open with **any double they like**, not
+  necessarily the 6-6 itself; they always hold at least one, so the lead is
+  never stuck.
+
+  Two toggles cover the alternatives: turn off *"the 6-6 opens every round"*
+  for the commoner tournament rule, where the 6-6 opens the match and the
+  previous round's winner leads after that, and turn off *"the 6-6 holder may
+  open with any double"* to make them lay the 6-6 itself.
 - **A round ends** when someone plays their last tile, or when all four pass
   in turn.
 
@@ -91,7 +96,8 @@ when the table is created:
 | Draw once both teams reach 5 | **on** | Off means the target alone decides it. |
 | Point against a false pass | **on** | Passing while holding a playable tile scores for the other team. |
 | Capicú counts double | **on** | A capicú round is worth 2 instead of 1 (+25 pips in the pip game). |
-| Forced 6-6 opening | on | Round one is opened by the 6-6 holder, who must play it. |
+| 6-6 decides the lead | on | Whoever holds the 6-6 opens. |
+| 6-6 opens every round | on | Not just the match's first round, so winning a round does not win the next lead. |
 | Locked round to the lightest hand | on | A blocked round is settled on the lightest single hand, not the lower two-hand total. |
 
 Two conventions are baked in and worth confirming against how you play:

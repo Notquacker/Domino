@@ -120,11 +120,29 @@ describe('dealing', () => {
     }
   });
 
-  it('lets the previous winner open later rounds with any tile', () => {
-    const r = dealRound(rules(), 3, 2, seededRng(7));
-    assert.equal(r.turn, 2);
+  it('gives the lead to the 6-6 holder in every round, not just the first', () => {
+    // Winning a round buys nothing at the next deal: whoever is dealt the
+    // 6-6 opens, round after round.
+    for (let roundNumber = 1; roundNumber <= 6; roundNumber++) {
+      const r = dealRound(rules(), roundNumber, 2, seededRng(roundNumber * 31));
+      assert.ok(
+        r.hands[r.turn]!.includes('6-6'),
+        `round ${roundNumber}: the lead went to someone without the 6-6`,
+      );
+    }
+  });
+
+  it('lets the previous winner open later rounds when that rule is off', () => {
+    const r = dealRound(rules({ doubleSixOpensEveryRound: false }), 3, 2, seededRng(7));
+    assert.equal(r.turn, 2, 'the seat handed in as the previous winner');
     assert.equal(r.opening, null);
     assert.equal(legalMoves(r, 2).length, 7, 'every tile should be a legal opener');
+  });
+
+  it('still opens the match with the 6-6 when it does not open every round', () => {
+    const r = dealRound(rules({ doubleSixOpensEveryRound: false }), 1, null, seededRng(9));
+    assert.ok(r.hands[r.turn]!.includes('6-6'), 'round one is still the 6-6 holder');
+    assert.deepEqual(r.opening, { kind: 'double' });
   });
 
   it('honours the house rule that drops the forced 6-6 opening', () => {
