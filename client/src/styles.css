@@ -493,6 +493,15 @@ body.shaking { animation: shake 0.62s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
 }
 .dropzone.over .zonepip { color: var(--gold); opacity: 1; }
 
+/* Where the dragged tile came from: an empty socket, not a copy of it. */
+.tile.lifted {
+  background: transparent;
+  border-style: dashed;
+  border-color: #ffffff2e;
+  box-shadow: none;
+}
+.tile.lifted .half { visibility: hidden; }
+
 /* The tile that follows your finger. */
 .tile.ghost {
   position: fixed; z-index: 50; pointer-events: none;

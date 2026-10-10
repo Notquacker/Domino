@@ -320,5 +320,9 @@ body.shaking { animation: shake .62s cubic-bezier(.36,.07,.19,.97); }
 .accuse .hint { margin: 0 0 10px; text-align: left; }
 .accuserow { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .forfeit { color: #e9937b; font-weight: 600; }
+/* Where the dragged tile came from: an empty socket, not a copy of it. */
+.tile.lifted { background: transparent; border-style: dashed;
+  border-color: #ffffff2e; box-shadow: none; }
+.tile.lifted .half { visibility: hidden; }
 </style>
 <div id="app"></div>

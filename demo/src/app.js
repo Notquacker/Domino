@@ -549,13 +549,19 @@
     var isPlaying = playing();
 
     if (!board.length) {
-      chain.appendChild(el('div', 'blank', isPlaying ? 'Your lead — lay a tile down.' : 'No tiles down yet.'));
-      box.appendChild(chain);
-
       // The lead has no ends to choose between, so the whole table is one
       // target; otherwise a dragged tile has nowhere to land.
       var leading = S.dragTile || S.selected;
-      if (leading && isPlaying) {
+      var showLead = leading && isPlaying;
+      // Both pieces of text sit in the middle of the table, so showing them
+      // together prints one straight over the other.
+      if (!showLead) {
+        chain.appendChild(el('div', 'blank',
+          isPlaying ? 'Your lead — lay a tile down.' : 'No tiles down yet.'));
+      }
+      box.appendChild(chain);
+
+      if (showLead) {
         var leadTap = !S.dragTile;
         var lead = el(leadTap ? 'button' : 'div',
           'dropzone lead' + (S.dragOver ? ' over' : '') + (leadTap ? ' tappable' : ''));
@@ -649,6 +655,10 @@
     tiles.forEach(function (id) {
       // Every tile looks the same: spotting what fits is the player's job.
       var node = handTile(id, S.selected === id ? 'sel' : 'playable');
+      // The tile is in the air under your finger, so the hand shows the
+      // socket it came out of rather than a second copy of it. The slot keeps
+      // its size: collapsing it would shuffle the rest around mid-drag.
+      if (S.dragTile === id) node.className += ' lifted';
       if (S.refused === id) node.className += ' refused';
       var act = function () {
         S.selected = S.selected === id ? null : id;

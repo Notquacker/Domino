@@ -1174,20 +1174,26 @@ function renderTable(v: PlayerView): HTMLElement {
   const playing = v.youMayMove;
 
   if (v.board.length === 0) {
-    chain.appendChild(
-      el(
-        'div',
-        'empty-table',
-        playing ? 'Your lead — lay a tile down.' : 'Waiting for the opening tile…',
-      ),
-    );
-    box.appendChild(chain);
-
     // The lead has no ends to choose between, so the whole table is one
     // target. Without this a dragged tile has nowhere to land and the opener
     // is left wondering why nothing happens.
     const leading = dragTile ?? selected;
-    if (leading !== null && playing) {
+    const showLead = leading !== null && playing;
+
+    // Both of these sit in the middle of the table, so showing them together
+    // prints one straight over the other.
+    if (!showLead) {
+      chain.appendChild(
+        el(
+          'div',
+          'empty-table',
+          playing ? 'Your lead — lay a tile down.' : 'Waiting for the opening tile…',
+        ),
+      );
+    }
+    box.appendChild(chain);
+
+    if (showLead) {
       const tappable = dragTile === null;
       const zone = el(
         tappable ? 'button' : 'div',
@@ -1301,6 +1307,10 @@ function renderHand(v: PlayerView): HTMLElement {
     // Every tile is offered. Whether it fits is for you to work out.
     const state = selected === id ? 'sel' : 'playable';
     const node = handTile(id, state);
+    // The tile is in the air under your finger, so the hand shows the socket
+    // it came out of rather than a second copy of it. The slot stays the same
+    // size: collapsing it would shuffle the other tiles around mid-drag.
+    if (dragTile === id) node.classList.add('lifted');
     if (rejected === id) node.classList.add('refused');
     if (myTurn()) {
       const activate = (): void => {
