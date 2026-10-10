@@ -5,3 +5,6 @@ dist/
 .env
 *.tsbuildinfo
 demo/dist/
+
+# Account store: password hashes live here. Never commit it.
+data/

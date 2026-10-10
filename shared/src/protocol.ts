@@ -94,9 +94,49 @@ export type ClientMessage =
   | { readonly t: 'smash' }
   /** Accuse an opponent of having passed while holding a playable tile. */
   | { readonly t: 'callOut'; readonly seat: Seat }
-  | { readonly t: 'ping' };
+  | { readonly t: 'ping' }
+  // --- accounts, for the leaderboard --------------------------------------
+  | { readonly t: 'register'; readonly username: string; readonly password: string }
+  | { readonly t: 'login'; readonly username: string; readonly password: string }
+  /** Sign back in with a token kept from a previous visit. */
+  | { readonly t: 'restore'; readonly token: string }
+  | { readonly t: 'logout' }
+  | { readonly t: 'changePassword'; readonly current: string; readonly next: string }
+  | { readonly t: 'leaderboard' }
+  // --- admin only ----------------------------------------------------------
+  | { readonly t: 'adminUsers' }
+  | { readonly t: 'adminSetPassword'; readonly username: string; readonly next: string }
+  | { readonly t: 'adminSetWins'; readonly username: string; readonly wins: number }
+  | { readonly t: 'adminSetAdmin'; readonly username: string; readonly isAdmin: boolean }
+  | { readonly t: 'adminDelete'; readonly username: string };
+
+/** What a player may know about an account — never a hash, never a salt. */
+export interface AccountInfo {
+  readonly username: string;
+  readonly isAdmin: boolean;
+  readonly wins: number;
+  readonly matches: number;
+  /** An admin reset this password, so the owner should pick a new one. */
+  readonly mustChangePassword: boolean;
+}
+
+export interface LeaderRow {
+  readonly rank: number;
+  readonly username: string;
+  readonly wins: number;
+  readonly matches: number;
+}
 
 export type ServerMessage =
+  | {
+      readonly t: 'account';
+      /** Null when signed out. */
+      readonly account: AccountInfo | null;
+      /** Only sent on a fresh sign-in, for the client to keep. */
+      readonly token?: string;
+    }
+  | { readonly t: 'leaders'; readonly rows: readonly LeaderRow[] }
+  | { readonly t: 'adminUsers'; readonly users: readonly AccountInfo[] }
   | {
       readonly t: 'welcome';
       readonly code: string;

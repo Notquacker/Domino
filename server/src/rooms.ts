@@ -64,9 +64,18 @@ export interface Player {
   user: AuthedUser | null;
   /** A computer player: it holds a seat but never has a socket. */
   readonly isBot: boolean;
+  /** Leaderboard account signed in on this connection, if any. */
+  accountName: string | null;
 }
 
 export type Broadcast = (player: Player, message: unknown) => void;
+
+/**
+ * Called once when a match finishes, with the usernames to credit. Separate
+ * from the Supabase history write because the leaderboard has to work whether
+ * or not Supabase is configured.
+ */
+export type OnFinished = (winners: readonly string[], played: readonly string[]) => void;
 
 function cryptoRng(): () => number {
   // Seed the shuffle from a real CSPRNG so hands are not predictable.
@@ -190,6 +199,7 @@ export class Room {
     private supabase: Supabase | null = null,
     /** Overridable so tests do not have to sit through the thinking pause. */
     private thinkMs: number = BOT_THINK_MS,
+    private onFinished: OnFinished | null = null,
   ) {
     this.code = code;
     this.rules = mergeRules(rules);
@@ -206,6 +216,7 @@ export class Room {
       lastSeen: Date.now(),
       user,
       isBot: false,
+      accountName: null,
     };
     this.players.set(player.id, player);
     if (this.hostId === null) this.hostId = player.id;
@@ -231,6 +242,7 @@ export class Room {
       lastSeen: Date.now(),
       user: null,
       isBot: true,
+      accountName: null,
     };
     this.players.set(bot.id, bot);
     return bot;
@@ -563,17 +575,37 @@ export class Room {
    * delay the table, and a failure is logged inside the Supabase client
    * rather than surfaced to players.
    */
+  /**
+   * Credit the leaderboard. Everyone signed in gets a match played; everyone
+   * on the winning team also gets a win, so a pair who win together both go
+   * up by one and keep their own totals across whoever they partner next.
+   */
+  private creditLeaderboard(match: MatchState): void {
+    if (this.onFinished === null) return;
+    const played: string[] = [];
+    const winners: string[] = [];
+    for (const seat of SEATS) {
+      const p = this.playerAtSeat(seat);
+      if (p === null || p.accountName === null) continue;
+      played.push(p.accountName);
+      // A drawn match counts as played by everyone and won by nobody.
+      if (match.winner !== null && teamOf(seat) === match.winner) winners.push(p.accountName);
+    }
+    if (played.length > 0) this.onFinished(winners, played);
+  }
+
   private maybeRecord(): void {
     const match = this.match;
     if (this.recorded || match === null || match.phase !== 'matchOver') return;
-    if (this.supabase === null || !this.supabase.enabled) return;
-    // A table with a computer player at it is practice, not a real match.
-    // Recording it would quietly inflate everybody's record.
-    if (SEATS.some((s) => this.botAt(s) !== null)) {
-      this.recorded = true;
-      return;
-    }
     this.recorded = true;
+
+    // A table with a computer player at it is practice, not a real match.
+    // Counting it would quietly inflate everybody's record.
+    if (SEATS.some((s) => this.botAt(s) !== null)) return;
+
+    this.creditLeaderboard(match);
+
+    if (this.supabase === null || !this.supabase.enabled) return;
 
     const remaining = match.lastResult?.remaining ?? [0, 0, 0, 0];
     const players: MatchPlayerRecord[] = SEATS.flatMap((seat) => {
@@ -734,6 +766,7 @@ export class RoomRegistry {
   constructor(
     private send: Broadcast,
     private supabase: Supabase | null = null,
+    private onFinished: OnFinished | null = null,
   ) {
     setInterval(() => this.reap(), 60_000).unref();
   }
@@ -750,7 +783,14 @@ export class RoomRegistry {
   }
 
   create(rules: Partial<HouseRules> | undefined): Room {
-    const room = new Room(this.freshCode(), rules, this.send, this.supabase);
+    const room = new Room(
+      this.freshCode(),
+      rules,
+      this.send,
+      this.supabase,
+      BOT_THINK_MS,
+      this.onFinished,
+    );
     this.rooms.set(room.code, room);
     return room;
   }

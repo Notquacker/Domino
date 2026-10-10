@@ -10,6 +10,7 @@ import { createReadStream, promises as fs } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { type Account, AccountError, Accounts } from './accounts.js';
 import {
   type ClientMessage,
   type Move,
@@ -50,6 +51,10 @@ interface Session {
   player: Player | null;
   /** Set once this connection presents a token the server could verify. */
   user: AuthedUser | null;
+  /** The signed-in leaderboard account, if any. Never carries a hash. */
+  account: Account | null;
+  /** The session token minted at sign-in, so logout can revoke it. */
+  accountToken: string | null;
   hits: number;
   windowStart: number;
 }
@@ -67,10 +72,26 @@ function sendTo(socket: WebSocket, message: unknown): void {
  */
 const supabase = Supabase.fromEnv();
 
-const registry = new RoomRegistry((player, message) => {
-  const socket = player.socket as WebSocket | null;
-  if (socket !== null) sendTo(socket, message);
-}, supabase);
+/**
+ * Where the leaderboard lives. A plain file, so it can be read, copied and
+ * backed up without any tooling. DATA_DIR points it somewhere durable; see
+ * the README on hosts whose filesystem does not survive a redeploy.
+ */
+const accounts = new Accounts(process.env['DATA_DIR'] ?? resolve(HERE, '../../data'));
+const ADMIN_NAME = process.env['ADMIN_USERNAME'] ?? 'Xay';
+const ADMIN_FALLBACK_PASSWORD = 'qwerty';
+
+const registry = new RoomRegistry(
+  (player, message) => {
+    const socket = player.socket as WebSocket | null;
+    if (socket !== null) sendTo(socket, message);
+  },
+  supabase,
+  // Fire and forget: a leaderboard write must never hold up the table.
+  (winners, played) => {
+    void accounts.recordResult(winners, played);
+  },
+);
 
 function fail(socket: WebSocket, message: string): void {
   sendTo(socket, { t: 'error', message });
@@ -166,9 +187,126 @@ function attach(session: Session, socket: WebSocket, room: Room, player: Player)
   }
   player.socket = socket;
   player.lastSeen = Date.now();
+  // Reconnecting with a token keeps the seat, so re-tie it to whoever is
+  // signed in on THIS connection rather than leaving a stale name on it.
+  player.accountName = session.account?.id ?? null;
   session.room = room;
   session.player = player;
   room.touch();
+}
+
+/** The account as a client may see it: no hash, no salt, ever. */
+function sendAccount(socket: WebSocket, session: Session, token?: string): void {
+  const account = session.account;
+  sendTo(socket, {
+    t: 'account',
+    account: account === null ? null : accounts.publicOf(account),
+    ...(token !== undefined ? { token } : {}),
+  });
+}
+
+/** Admin-only commands all start the same way. */
+function requireAdmin(session: Session): Account {
+  const account = session.account;
+  if (account === null || !account.isAdmin) throw new RuleError('admins only');
+  return account;
+}
+
+/** Look up the target of an admin command. */
+function targetOf(username: unknown): Account {
+  const target = accounts.get(String(username ?? ''));
+  if (target === null) throw new RuleError('no such player');
+  return target;
+}
+
+async function handleAccounts(
+  socket: WebSocket,
+  session: Session,
+  msg: ClientMessage,
+): Promise<boolean> {
+  switch (msg.t) {
+    case 'register': {
+      const account = await accounts.register(msg.username, msg.password);
+      session.account = account;
+      session.accountToken = accounts.startSession(account);
+      sendAccount(socket, session, session.accountToken);
+      return true;
+    }
+    case 'login': {
+      const account = await accounts.authenticate(msg.username, msg.password);
+      // One message for both "no such name" and "wrong password": telling
+      // them apart would let anyone map out who has an account.
+      if (account === null) throw new RuleError('wrong name or password');
+      session.account = account;
+      session.accountToken = accounts.startSession(account);
+      sendAccount(socket, session, session.accountToken);
+      return true;
+    }
+    case 'restore': {
+      const account = accounts.fromSession(msg.token);
+      session.account = account;
+      session.accountToken = account === null ? null : String(msg.token);
+      sendAccount(socket, session);
+      return true;
+    }
+    case 'logout': {
+      if (session.accountToken !== null) accounts.endSession(session.accountToken);
+      session.account = null;
+      session.accountToken = null;
+      sendAccount(socket, session);
+      return true;
+    }
+    case 'changePassword': {
+      const account = session.account;
+      if (account === null) throw new RuleError('sign in first');
+      await accounts.changeOwnPassword(account, msg.current, msg.next);
+      // Changing the password drops every session, this one included, so the
+      // client is handed a fresh token rather than being silently logged out.
+      session.accountToken = accounts.startSession(account);
+      sendAccount(socket, session, session.accountToken);
+      return true;
+    }
+    case 'leaderboard':
+      sendTo(socket, { t: 'leaders', rows: accounts.leaderboard() });
+      return true;
+    case 'adminUsers':
+      requireAdmin(session);
+      sendTo(socket, { t: 'adminUsers', users: accounts.everyone() });
+      return true;
+    case 'adminSetPassword': {
+      requireAdmin(session);
+      await accounts.setPassword(targetOf(msg.username), msg.next, true);
+      sendTo(socket, { t: 'adminUsers', users: accounts.everyone() });
+      return true;
+    }
+    case 'adminSetWins': {
+      requireAdmin(session);
+      await accounts.setWins(targetOf(msg.username), Number(msg.wins));
+      sendTo(socket, { t: 'adminUsers', users: accounts.everyone() });
+      return true;
+    }
+    case 'adminSetAdmin': {
+      const me = requireAdmin(session);
+      const target = targetOf(msg.username);
+      // Removing your own admin rights could leave the table with none.
+      if (target.id === me.id && !msg.isAdmin) {
+        throw new RuleError('you cannot take away your own admin rights');
+      }
+      await accounts.setAdmin(target, Boolean(msg.isAdmin));
+      sendTo(socket, { t: 'adminUsers', users: accounts.everyone() });
+      return true;
+    }
+    case 'adminDelete': {
+      const me = requireAdmin(session);
+      const target = targetOf(msg.username);
+      if (target.id === me.id) throw new RuleError('you cannot delete yourself');
+      await accounts.remove(target);
+      sendTo(socket, { t: 'adminUsers', users: accounts.everyone() });
+      return true;
+    }
+    default:
+      return false;
+  }
 }
 
 async function handle(socket: WebSocket, session: Session, msg: ClientMessage): Promise<void> {
@@ -176,6 +314,8 @@ async function handle(socket: WebSocket, session: Session, msg: ClientMessage): 
     sendTo(socket, { t: 'pong' });
     return;
   }
+
+  if (await handleAccounts(socket, session, msg)) return;
 
   if (msg.t === 'auth') {
     // A token that does not verify is not an error worth closing over — the
@@ -194,6 +334,8 @@ async function handle(socket: WebSocket, session: Session, msg: ClientMessage): 
   if (msg.t === 'create') {
     const room = registry.create(msg.rules);
     const player = room.addPlayer(sanitizeName(msg.name), session.user);
+    // Tie the seat to the signed-in account so a win can be credited.
+    player.accountName = session.account?.id ?? null;
     attach(session, socket, room, player);
     if (session.user !== null) void supabase.upsertProfile(session.user, player.name);
     room.sit(player, 0);
@@ -210,6 +352,8 @@ async function handle(socket: WebSocket, session: Session, msg: ClientMessage): 
       return;
     }
     const player = room.addPlayer(sanitizeName(msg.name), session.user);
+    // Tie the seat to the signed-in account so a win can be credited.
+    player.accountName = session.account?.id ?? null;
     attach(session, socket, room, player);
     if (session.user !== null) void supabase.upsertProfile(session.user, player.name);
     // Seat them automatically if there is room; otherwise they watch.
@@ -305,6 +449,8 @@ wss.on('connection', (socket: WebSocket) => {
     room: null,
     player: null,
     user: null,
+    account: null,
+    accountToken: null,
     hits: 0,
     windowStart: Date.now(),
   };
@@ -330,7 +476,9 @@ wss.on('connection', (socket: WebSocket) => {
     }
 
     handle(socket, session, msg).catch((err: unknown) => {
-      if (err instanceof RuleError) {
+      if (err instanceof RuleError || err instanceof AccountError) {
+        // Both are refusals the player should read, not server faults. An
+        // AccountError never carries a password or a hash in its message.
         fail(socket, err.message);
       } else {
         console.error('[domino] handler error', err);
@@ -381,14 +529,30 @@ setInterval(() => {
   }
 }, 30_000).unref();
 
-http.listen(PORT, HOST, () => {
-  console.log(`[domino] listening on http://${HOST}:${PORT}`);
-  console.log(
-    supabase.enabled
-      ? '[domino] accounts and match history enabled'
-      : '[domino] no Supabase configured — guest play only',
-  );
-});
+async function boot(): Promise<void> {
+  await accounts.load();
+  const admin = await accounts.ensureAdmin(ADMIN_NAME, ADMIN_FALLBACK_PASSWORD);
+
+  http.listen(PORT, HOST, () => {
+    console.log(`[domino] listening on http://${HOST}:${PORT}`);
+    console.log(
+      supabase.enabled
+        ? '[domino] match history enabled'
+        : '[domino] no Supabase configured — match history off',
+    );
+    console.log(`[domino] ${accounts.count()} account(s) loaded`);
+    if (admin.usingFallback) {
+      // Said plainly and every boot, because a known default password on a
+      // public URL is exactly the thing that gets forgotten about.
+      console.warn(
+        `[domino] WARNING: admin "${ADMIN_NAME}" is using the placeholder password. ` +
+          'Set ADMIN_PASSWORD in the environment, or change it from the app.',
+      );
+    }
+  });
+}
+
+void boot();
 
 function shutdown(): void {
   console.log('[domino] shutting down');

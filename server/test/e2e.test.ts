@@ -10,7 +10,15 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { after, before, describe, it } from 'node:test';
 import { WebSocket } from 'ws';
-import type { ClientMessage, Move, PlayerView, ServerMessage, TileId } from '@domino/shared';
+import type {
+  AccountInfo,
+  ClientMessage,
+  LeaderRow,
+  Move,
+  PlayerView,
+  ServerMessage,
+  TileId,
+} from '@domino/shared';
 import { parseTile } from '@domino/shared';
 
 /**
@@ -52,6 +60,10 @@ class TestClient {
   token = '';
   code = '';
   errors: string[] = [];
+  account: AccountInfo | null = null;
+  accountToken = '';
+  leaders: LeaderRow[] = [];
+  adminUsers: AccountInfo[] = [];
   private waiters: { test: () => boolean; resolve: () => void }[] = [];
 
   readonly label: string;
@@ -81,6 +93,17 @@ class TestClient {
       frames.push({ seat: msg.view.you, raw });
     } else if (msg.t === 'error') {
       this.errors.push(msg.message);
+    } else if (msg.t === 'account') {
+      this.account = msg.account;
+      if (msg.token !== undefined) this.accountToken = msg.token;
+      // Account frames go through the leak audit too: a hash or a password
+      // reaching a client would show up here.
+      frames.push({ seat: null, raw });
+    } else if (msg.t === 'leaders') {
+      this.leaders = [...msg.rows];
+    } else if (msg.t === 'adminUsers') {
+      this.adminUsers = [...msg.users];
+      frames.push({ seat: null, raw });
     }
     for (const waiter of this.waiters.slice()) {
       if (waiter.test()) {
@@ -535,5 +558,144 @@ describe('catching a false pass across four connections', () => {
       assert.equal(client.view!.lastResult!.kind, 'calledOut');
       client.close();
     }
+  });
+});
+
+/** Accounts and the leaderboard, over the wire. */
+describe('accounts and the leaderboard', () => {
+  const c = new TestClient('acct');
+
+  it('creates an account, signs out, and signs back in', async () => {
+    await c.open();
+    c.send({ t: 'register', username: 'Pico', password: 'picopass' });
+    await c.until(() => c.account?.username === 'Pico', 'the account');
+    assert.equal(c.account!.wins, 0);
+    assert.equal(c.account!.isAdmin, false, 'a new account is not an admin');
+    assert.ok(c.accountToken.length > 20, 'a session token comes back');
+
+    // The frames must never carry anything password-shaped.
+    for (const frame of frames) {
+      assert.ok(!frame.raw.includes('picopass'), 'a password was echoed back to a client');
+      assert.ok(!frame.raw.includes('"hash"'), 'a password hash reached a client');
+      assert.ok(!frame.raw.includes('"salt"'), 'a salt reached a client');
+    }
+
+    // A token from this session works on a brand new connection: that is how
+    // a reload keeps you signed in.
+    const token = c.accountToken;
+    const other = new TestClient('acct2');
+    await other.open();
+    other.send({ t: 'restore', token });
+    await other.until(() => other.account?.username === 'Pico', 'to be signed back in');
+    other.close();
+
+    // Signing out kills the token everywhere, so a copy of it is now useless.
+    c.send({ t: 'logout' });
+    await c.until(() => c.account === null, 'to be signed out');
+    const third = new TestClient('acct3');
+    await third.open();
+    third.send({ t: 'restore', token });
+    await third.until(() => third.account === null, 'the dead token to be refused');
+    assert.equal(third.account, null, 'a token from before a sign-out must not work');
+    third.close();
+
+    c.send({ t: 'login', username: 'Pico', password: 'picopass' });
+    await c.until(() => c.account?.username === 'Pico', 'to sign back in with the password');
+  });
+
+  it('refuses a duplicate name and a wrong password, without saying which', async () => {
+    c.errors = [];
+    c.send({ t: 'register', username: 'pico', password: 'whatever' });
+    await c.until(() => c.errors.length > 0, 'a refusal');
+    assert.match(c.errors[0]!, /taken/);
+
+    c.errors = [];
+    c.send({ t: 'login', username: 'Pico', password: 'notmypassword' });
+    await c.until(() => c.errors.length > 0, 'a refusal');
+    const wrongPass = c.errors[0]!;
+    c.errors = [];
+    c.send({ t: 'login', username: 'NobodyAtAll', password: 'notmypassword' });
+    await c.until(() => c.errors.length > 0, 'a refusal');
+    assert.equal(
+      c.errors[0],
+      wrongPass,
+      'a wrong password and an unknown name must read the same, or the message maps out who has an account',
+    );
+  });
+
+  it('keeps admin commands away from a player who is not one', async () => {
+    c.errors = [];
+    c.send({ t: 'adminUsers' });
+    await c.until(() => c.errors.length > 0, 'a refusal');
+    assert.match(c.errors[0]!, /admins only/);
+
+    c.errors = [];
+    c.send({ t: 'adminSetPassword', username: 'Pico', next: 'hijacked' });
+    await c.until(() => c.errors.length > 0, 'a refusal');
+    assert.match(c.errors[0]!, /admins only/);
+    // And the password is untouched: the old one still works.
+    c.send({ t: 'login', username: 'Pico', password: 'picopass' });
+    await c.until(() => c.account?.username === 'Pico', 'the old password still works');
+    c.close();
+  });
+
+  it('gives a win to both players on the winning team', async () => {
+    const clients = [0, 1, 2, 3].map((i) => new TestClient(`lb${i}`));
+    // Names of their own: the admin seat is already called Xay and an earlier
+    // test in this file has taken Pico.
+    const names = ['BoardOne', 'BoardTwo', 'BoardThree', 'BoardFour'];
+    for (const client of clients) await client.open();
+    for (let i = 0; i < 4; i++) {
+      clients[i]!.send({ t: 'register', username: names[i]!, password: 'tablepass' });
+      await clients[i]!.until(() => clients[i]!.account !== null, 'an account');
+    }
+
+    const host = clients[0]!;
+    host.send({ t: 'create', name: names[0]!, rules: { targetScore: 1, winBy: 1, drawAt: null } });
+    await host.until(() => host.view !== null, 'a table');
+    const code = host.code;
+    for (let i = 1; i < 4; i++) {
+      clients[i]!.send({ t: 'join', code, name: names[i]! });
+      await clients[i]!.until(() => clients[i]!.view !== null, 'to join');
+    }
+    for (let i = 0; i < 4; i++) {
+      clients[i]!.send({ t: 'sit', seat: i as 0 | 1 | 2 | 3 });
+      await clients[i]!.until(() => clients[i]!.view!.you === i, 'a seat');
+    }
+    host.send({ t: 'start' });
+    await host.until(() => host.view!.phase === 'playing', 'the match');
+
+    for (let guard = 0; guard < 400; guard++) {
+      if (host.view!.phase === 'matchOver') break;
+      const onTurn = clients.find((x) => x.view!.youMayMove);
+      if (onTurn === undefined) {
+        await new Promise((r) => setTimeout(r, 25));
+        continue;
+      }
+      const move = chooseMove(onTurn.view!);
+      if (move === null) break;
+      onTurn.send({ t: 'move', move });
+      await onTurn.until(() => !onTurn.view!.youMayMove, 'the move', 20_000);
+    }
+    assert.equal(host.view!.phase, 'matchOver', 'the match should have finished');
+    const winningTeam = host.view!.winner;
+    assert.notEqual(winningTeam, null, 'somebody won');
+
+    host.send({ t: 'leaderboard' });
+    await host.until(() => host.leaders.length > 0, 'the board', 10_000);
+
+    // Seats 0 and 2 are one team, 1 and 3 the other.
+    const expectWin = [0, 1, 2, 3].filter((seat) => seat % 2 === winningTeam);
+    for (const seat of expectWin) {
+      const row = host.leaders.find((r) => r.username === names[seat]);
+      assert.ok(row, `${names[seat]} should be on the board`);
+      assert.equal(row!.wins, 1, `${names[seat]} was on the winning team and should have a win`);
+    }
+    for (const seat of [0, 1, 2, 3].filter((s) => s % 2 !== winningTeam)) {
+      const row = host.leaders.find((r) => r.username === names[seat]);
+      assert.equal(row?.wins ?? 0, 0, `${names[seat]} lost and should have no win`);
+      assert.equal(row?.matches ?? 0, 1, `${names[seat]} still played a match`);
+    }
+    for (const client of clients) client.close();
   });
 });

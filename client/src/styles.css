@@ -594,3 +594,35 @@ body.shaking { animation: shake 0.62s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
 .accuse .hint { margin: 0 0 10px; text-align: left; }
 .accuserow { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .forfeit { color: #e9937b; font-weight: 600; }
+
+/* --- accounts and the leaderboard --- */
+.formrow { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.formrow input { flex: 1 1 auto; min-width: 0; }
+.btnrow { display: flex; gap: 8px; align-items: center; }
+.btnrow button { flex: 1 1 auto; }
+.btnrow input { flex: 1 1 auto; min-width: 0; }
+.hint.ok { color: #7fd6a4; }
+.warn { color: #e9937b; font-size: 13px; margin: 4px 0 8px; }
+.signedin { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 17px; }
+/* The ADMIN pill reads the same wherever it appears. */
+.signedin .tag, .adminrow .tag { font-size: 9px; font-weight: 800; letter-spacing: .08em;
+  padding: 2px 6px; border-radius: 999px; background: var(--gold); color: #10231c; }
+
+.board { display: grid; gap: 4px; margin-top: 6px; }
+.boardrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 9px;
+  background: #0000002e; border: 1px solid #ffffff10;
+}
+.boardrow.me { border-color: var(--gold); background: #e8b65c14; }
+.boardrow .rank { width: 22px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.boardrow .who { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.boardrow .wins { font-weight: 800; color: var(--gold); font-variant-numeric: tabular-nums; }
+.boardrow .played { color: var(--muted); font-size: 12px; }
+
+.adminrow { padding: 10px 0; border-top: 1px solid #ffffff14; }
+.adminrow .name { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.adminrow .name .sub { color: var(--muted); font-size: 12px; }
+.adminrow .btnrow { margin-top: 6px; }
+.adminrow input { width: 100%; }

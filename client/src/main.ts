@@ -8,7 +8,16 @@
  * tampered client can cheat nobody.
  */
 
-import type { End, HouseRules, PlayerView, Seat, ServerMessage, TileId } from '@domino/shared';
+import type {
+  AccountInfo,
+  End,
+  HouseRules,
+  LeaderRow,
+  PlayerView,
+  Seat,
+  ServerMessage,
+  TileId,
+} from '@domino/shared';
 import { TEAM_NAMES, teamOf } from '@domino/shared';
 import { Net } from './net.js';
 import {
@@ -73,6 +82,23 @@ let intent: Intent = { kind: 'idle' };
 let chats: { from: string; text: string }[] = [];
 /** True while the accuse panel is open, so a stray tap cannot cost a round. */
 let accusing = false;
+
+// --- leaderboard accounts (username + password, no email) -----------------
+let myAccount: AccountInfo | null = null;
+/** The session token, kept so a reload does not sign you out. */
+let accountToken: string = recall('domino.session') ?? '';
+let leaders: LeaderRow[] = [];
+let adminUsers: AccountInfo[] = [];
+let showAdmin = false;
+let accountNotice = '';
+/**
+ * The server answers both "list the players" and "that change is done" with
+ * the same frame, so the client remembers whether it actually asked for a
+ * change. Without this, simply opening the panel reported "Saved."
+ */
+let awaitingAdminChange = false;
+/** Typed-in values, kept across re-renders so a redraw cannot eat them. */
+const signIn = { username: recall('domino.lastuser') ?? '', password: '' };
 let name = recall(STORE.name);
 let formCode = new URL(location.href).searchParams.get('code')?.toUpperCase() ?? '';
 let lastBoard: readonly string[] = [];
@@ -183,6 +209,10 @@ async function ensureAuthSent(): Promise<void> {
 /** Runs on every (re)connect: resume a seat if we hold a token, else idle. */
 function onReady(): void {
   authSent = false;
+  // Sign back in and refresh the board on every (re)connect, so a dropped
+  // connection does not quietly leave you signed out.
+  if (accountToken !== '') net.send({ t: 'restore', token: accountToken });
+  net.send({ t: 'leaderboard' });
   void (async () => {
     await ensureAuthSent();
     const token = recall(STORE.token);
@@ -236,6 +266,8 @@ function onMessage(msg: ServerMessage): void {
         }, 600);
       } else {
         error = msg.message;
+        // A refused command is not a saved one.
+        awaitingAdminChange = false;
       }
       pending = null;
       // A dead token would otherwise loop on every reconnect.
@@ -258,6 +290,41 @@ function onMessage(msg: ServerMessage): void {
         smashedBy = null;
         render();
       }, 2600);
+      break;
+    case 'account': {
+      myAccount = msg.account;
+      if (msg.token !== undefined) {
+        accountToken = msg.token;
+        remember('domino.session', accountToken);
+      }
+      if (msg.account === null) {
+        accountToken = '';
+        remember('domino.session', '');
+        showAdmin = false;
+      } else {
+        remember('domino.lastuser', msg.account.username);
+        signIn.password = '';
+        // Keep the board honest the moment anything about you changes.
+        net.send({ t: 'leaderboard' });
+        if (msg.account.isAdmin && showAdmin) net.send({ t: 'adminUsers' });
+      }
+      render();
+      break;
+    }
+    case 'leaders':
+      leaders = [...msg.rows];
+      render();
+      break;
+    case 'adminUsers':
+      adminUsers = [...msg.users];
+      if (awaitingAdminChange) {
+        accountNotice = 'Saved.';
+        awaitingAdminChange = false;
+        // A change here can move the standings, so refresh them too rather
+        // than leaving a board on screen that no longer matches.
+        net.send({ t: 'leaderboard' });
+      }
+      render();
       break;
     case 'pong':
       return;
@@ -410,6 +477,219 @@ function pass(): void {
  * The account panel. Absent entirely when the server has no Supabase project
  * configured, so a guest-only deployment shows no dead UI.
  */
+/** A labelled text input that keeps what you typed across a redraw. */
+function field(
+  id: string,
+  label: string,
+  type: 'text' | 'password',
+  value: string,
+  onInput: (v: string) => void,
+): HTMLElement {
+  const row = el('label', 'formrow');
+  row.appendChild(el('span', 'grow', label));
+  const input = el('input') as HTMLInputElement;
+  input.id = id;
+  input.type = type;
+  input.value = value;
+  input.autocomplete = type === 'password' ? 'current-password' : 'username';
+  input.addEventListener('input', () => onInput(input.value));
+  row.appendChild(input);
+  return row;
+}
+
+/** Sign in, or make an account. Username and password only — no email. */
+function renderSignInCard(): HTMLElement {
+  const card = el('div', 'card');
+  card.appendChild(el('h2', undefined, myAccount === null ? 'Players' : 'Your account'));
+
+  if (accountNotice !== '') {
+    card.appendChild(el('p', 'hint ok', accountNotice));
+  }
+
+  if (myAccount === null) {
+    card.appendChild(
+      el('p', 'hint', 'Sign in to have your wins counted on the leaderboard. Playing as a guest works too — it just is not counted.'),
+    );
+    card.appendChild(
+      field('acctuser', 'Name', 'text', signIn.username, (v) => {
+        signIn.username = v;
+      }),
+    );
+    card.appendChild(
+      field('acctpass', 'Password', 'password', signIn.password, (v) => {
+        signIn.password = v;
+      }),
+    );
+    const row = el('div', 'btnrow');
+    const go = el('button', 'gold', 'Sign in') as HTMLButtonElement;
+    go.addEventListener('click', () => {
+      accountNotice = '';
+      net.send({ t: 'login', username: signIn.username, password: signIn.password });
+    });
+    row.appendChild(go);
+    const make = el('button', 'ghost', 'Create account') as HTMLButtonElement;
+    make.addEventListener('click', () => {
+      accountNotice = '';
+      net.send({ t: 'register', username: signIn.username, password: signIn.password });
+    });
+    row.appendChild(make);
+    card.appendChild(row);
+    return card;
+  }
+
+  const me = myAccount;
+  const line = el('p', 'signedin');
+  line.appendChild(el('b', undefined, me.username));
+  if (me.isAdmin) line.appendChild(el('span', 'tag now', 'ADMIN'));
+  card.appendChild(line);
+  card.appendChild(
+    el('p', 'hint', `${me.wins} ${me.wins === 1 ? 'win' : 'wins'} from ${me.matches} ${me.matches === 1 ? 'match' : 'matches'}.`),
+  );
+  if (me.mustChangePassword) {
+    card.appendChild(
+      el('p', 'warn', 'An admin set this password for you. Pick your own below.'),
+    );
+  }
+
+  // Changing your own password: both fields, so a shoulder-surfer cannot
+  // change it from an unlocked phone without knowing the old one.
+  const pw = { current: '', next: '' };
+  const details = el('details') as HTMLDetailsElement;
+  // Opened already when an admin has just reset it, so the prompt is not
+  // hidden behind a tap the player has no reason to make.
+  details.open = me.mustChangePassword;
+  details.appendChild(el('summary', undefined, 'Change my password'));
+  details.appendChild(
+    field('curpass', 'Current', 'password', '', (v) => {
+      pw.current = v;
+    }),
+  );
+  details.appendChild(
+    field('newpass', 'New', 'password', '', (v) => {
+      pw.next = v;
+    }),
+  );
+  const save = el('button', 'gold', 'Save password') as HTMLButtonElement;
+  save.style.width = '100%';
+  save.addEventListener('click', () => {
+    accountNotice = '';
+    net.send({ t: 'changePassword', current: pw.current, next: pw.next });
+    accountNotice = 'Password changed.';
+  });
+  details.appendChild(save);
+  card.appendChild(details);
+
+  const row = el('div', 'btnrow');
+  if (me.isAdmin) {
+    const manage = el('button', 'ghost', showAdmin ? 'Hide players' : 'Manage players') as HTMLButtonElement;
+    manage.addEventListener('click', () => {
+      showAdmin = !showAdmin;
+      accountNotice = '';
+      if (showAdmin) net.send({ t: 'adminUsers' });
+      render();
+    });
+    row.appendChild(manage);
+  }
+  const out = el('button', 'ghost', 'Sign out') as HTMLButtonElement;
+  out.addEventListener('click', () => {
+    accountNotice = '';
+    net.send({ t: 'logout' });
+  });
+  row.appendChild(out);
+  card.appendChild(row);
+  return card;
+}
+
+function renderLeaderboard(): HTMLElement {
+  const card = el('div', 'card');
+  card.appendChild(el('h2', undefined, 'Leaderboard'));
+  if (leaders.length === 0) {
+    card.appendChild(el('p', 'hint', 'No finished matches yet. Win one and it shows up here.'));
+    return card;
+  }
+  const table = el('div', 'board');
+  for (const row of leaders) {
+    const line = el('div', `boardrow${myAccount?.username === row.username ? ' me' : ''}`);
+    line.appendChild(el('span', 'rank', String(row.rank)));
+    line.appendChild(el('span', 'who', row.username));
+    line.appendChild(el('span', 'wins', `${row.wins}`));
+    line.appendChild(el('span', 'played', `of ${row.matches}`));
+    table.appendChild(line);
+  }
+  card.appendChild(table);
+  card.appendChild(el('p', 'hint', 'Wins · matches played. Both partners on a winning team get a win.'));
+  return card;
+}
+
+/** Admin only: the server refuses every one of these from anyone else. */
+function renderAdminCard(): HTMLElement | null {
+  if (myAccount === null || !myAccount.isAdmin || !showAdmin) return null;
+  const card = el('div', 'card');
+  card.appendChild(el('h2', undefined, 'Manage players'));
+  for (const user of adminUsers) {
+    const box = el('div', 'adminrow');
+    const head = el('div', 'name');
+    head.appendChild(el('b', undefined, user.username));
+    if (user.isAdmin) head.appendChild(el('span', 'tag now', 'ADMIN'));
+    head.appendChild(el('span', 'sub', `${user.wins} wins · ${user.matches} played`));
+    box.appendChild(head);
+
+    const pass = { value: '' };
+    const row = el('div', 'btnrow');
+    const input = el('input') as HTMLInputElement;
+    input.id = `set-${user.username}`;
+    input.type = 'text';
+    input.placeholder = 'new password';
+    input.addEventListener('input', () => {
+      pass.value = input.value;
+    });
+    row.appendChild(input);
+    const set = el('button', 'ghost small', 'Reset') as HTMLButtonElement;
+    set.addEventListener('click', () => {
+      accountNotice = '';
+      awaitingAdminChange = true;
+      net.send({ t: 'adminSetPassword', username: user.username, next: pass.value });
+    });
+    row.appendChild(set);
+    box.appendChild(row);
+
+    const row2 = el('div', 'btnrow');
+    const wins = el('input') as HTMLInputElement;
+    wins.id = `wins-${user.username}`;
+    wins.type = 'number';
+    wins.min = '0';
+    wins.value = String(user.wins);
+    row2.appendChild(wins);
+    const setWins = el('button', 'ghost small', 'Set wins') as HTMLButtonElement;
+    setWins.addEventListener('click', () => {
+      accountNotice = '';
+      awaitingAdminChange = true;
+      net.send({ t: 'adminSetWins', username: user.username, wins: Number(wins.value) });
+    });
+    row2.appendChild(setWins);
+    const toggle = el('button', 'ghost small', user.isAdmin ? 'Drop admin' : 'Make admin') as HTMLButtonElement;
+    toggle.addEventListener('click', () => {
+      accountNotice = '';
+      awaitingAdminChange = true;
+      net.send({ t: 'adminSetAdmin', username: user.username, isAdmin: !user.isAdmin });
+    });
+    row2.appendChild(toggle);
+    if (user.username !== myAccount.username) {
+      const del = el('button', 'ghost small danger', 'Delete') as HTMLButtonElement;
+      del.addEventListener('click', () => {
+        if (!confirm(`Delete ${user.username}? Their wins go too.`)) return;
+        accountNotice = '';
+        awaitingAdminChange = true;
+      net.send({ t: 'adminDelete', username: user.username });
+      });
+      row2.appendChild(del);
+    }
+    box.appendChild(row2);
+    card.appendChild(box);
+  }
+  return card;
+}
+
 function renderAccountCard(): HTMLElement | null {
   if (!accountsEnabled) return null;
 
@@ -780,6 +1060,11 @@ function renderLanding(): HTMLElement {
   joinRow.appendChild(joinBtn);
   joinCard.appendChild(joinRow);
   wrap.appendChild(joinCard);
+
+  wrap.appendChild(renderSignInCard());
+  const adminCard = renderAdminCard();
+  if (adminCard !== null) wrap.appendChild(adminCard);
+  wrap.appendChild(renderLeaderboard());
 
   const accountCard = renderAccountCard();
   if (accountCard !== null) wrap.appendChild(accountCard);

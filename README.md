@@ -110,6 +110,58 @@ Two conventions are baked in and worth confirming against how you play:
 
 Both live in `shared/src/rules.ts` and are small to change.
 
+## Accounts and the leaderboard
+
+Username and password, nothing else — no email, no recovery link. Signing in
+is optional: guests play exactly as before, their matches just are not
+counted.
+
+**What is counted.** When a match finishes, everyone signed in at that table
+gets a match played, and both players on the winning team get a win. Wins
+follow the person, not the pair: win with one partner and again with another
+and you have two while each of them has one. A table with a computer player
+at it is practice and is not counted at all.
+
+**Passwords.** Stored as a scrypt hash with a per-account salt and nothing
+else. The plaintext is used to derive the hash and then dropped — never
+written, never logged, never sent back. Comparisons are timing-safe, a run of
+wrong guesses locks an account for a few minutes, and changing a password
+drops every session it had. "Wrong name" and "wrong password" give the same
+message so nobody can map out which accounts exist.
+
+### The admin
+
+One admin account is created on first boot — `Xay` by default, or whatever
+`ADMIN_USERNAME` says. Its password comes from **`ADMIN_PASSWORD`**; with
+that unset it falls back to a placeholder and the server says so loudly in
+its log on every boot:
+
+```
+[domino] WARNING: admin "Xay" is using the placeholder password.
+```
+
+> **Set `ADMIN_PASSWORD`, or change the password from the app, before anyone
+> else has the URL.** A known password on a public address is an open door —
+> this one can reset every other player's password.
+
+The admin can reset anyone's password, adjust or correct a win count, grant
+or remove admin, and delete an account. Two things it deliberately cannot do:
+remove its own admin rights, or delete itself, either of which would leave
+the table with no admin at all. A password an admin sets is marked temporary,
+and its owner is prompted to choose their own.
+
+### Where it is stored, and when it is lost
+
+Accounts live in **`data/accounts.json`** (set `DATA_DIR` to move it), written
+to a temporary file and renamed so a crash mid-write cannot destroy what was
+there. It is gitignored: it holds password hashes.
+
+**A container that restarts from its image loses files written at runtime.**
+On a host like that — a free-tier web service with no persistent disk — the
+leaderboard resets on every redeploy. For it to last, point `DATA_DIR` at a
+mounted disk, or move the store to Supabase, which this project is already
+wired for.
+
 ### Whose turn it is
 
 The player on turn gets a gold card with a **PLAYING** badge; the one after

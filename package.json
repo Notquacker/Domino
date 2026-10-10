@@ -14,7 +14,7 @@
     "build:server": "npm run build:shared && tsc -p server",
     "build:client": "npm run build:shared && vite build client",
     "build": "npm run build:server && npm run build:client",
-    "test": "npm run build && node --test shared/test/rules.test.ts server/test/auth.test.ts server/test/bot.test.ts server/test/e2e.test.ts",
+    "test": "npm run build && node --test shared/test/rules.test.ts server/test/auth.test.ts server/test/accounts.test.ts server/test/bot.test.ts server/test/e2e.test.ts",
     "dev": "npm run build:shared && concurrently -n server,client -c blue,magenta \"tsc -p server --watch --preserveWatchOutput\" \"vite client\"",
     "start": "node server/dist/index.js",
     "typecheck": "tsc -p shared && tsc -p server && tsc --noEmit -p client && tsc --noEmit -p shared/test && tsc --noEmit -p server/test",
