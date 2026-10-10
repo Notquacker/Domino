@@ -94,8 +94,15 @@ class TestClient {
     this.socket.send(JSON.stringify(msg));
   }
 
-  /** Resolve once the client's own view satisfies `test`. */
-  until(test: () => boolean, label: string, ms = 10_000): Promise<void> {
+  /**
+   * Resolve once the client's own view satisfies `test`.
+   *
+   * The limits here are generous on purpose. Nothing in this test is timing
+   * sensitive — they exist only so a wedged run fails instead of hanging —
+   * and a shared CI runner is far slower than a developer's machine. A tight
+   * limit buys nothing and turns a slow minute into a red build.
+   */
+  until(test: () => boolean, label: string, ms = 30_000): Promise<void> {
     if (test()) return Promise.resolve();
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
@@ -118,7 +125,7 @@ class TestClient {
 }
 
 async function waitForServer(): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < 300; attempt++) {
     try {
       const res = await fetch(`${BASE}/healthz`);
       if (res.ok) return;
@@ -286,7 +293,7 @@ describe('a full four-player match over the wire', () => {
 
   it('plays the match through to its target score', async () => {
     const done = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('match did not finish in time')), 25_000);
+      const timer = setTimeout(() => reject(new Error('match did not finish in time')), 90_000);
       let settled = false;
 
       const step = (client: TestClient): void => {
