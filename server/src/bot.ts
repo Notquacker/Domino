@@ -15,12 +15,19 @@
 
 import {
   type BoardTile,
+  type Dir,
+  type End,
   type HouseRules,
   type Move,
   type Pip,
   type Seat,
   type TileId,
+  directionsAt,
   isDouble,
+  outwardDir,
+  laidTiles,
+  layout,
+  openerIndexOf,
   parseTile,
   teamOf,
   tileHas,
@@ -33,6 +40,8 @@ export interface BotContext {
   /** The bot's own tiles — the one piece of hidden state it is entitled to. */
   readonly hand: readonly TileId[];
   readonly board: readonly BoardTile[];
+  /** Which tile opened, so the bot can work out the shape on the table. */
+  readonly openerTile: TileId | null;
   readonly ends: { readonly left: Pip; readonly right: Pip } | null;
   /** Tiles still held, by seat. Public: everyone can count them. */
   readonly tilesLeft: readonly number[];
@@ -150,10 +159,66 @@ function scorePlay(ctx: BotContext, tile: TileId, end: 'left' | 'right'): number
  * is chosen only when the rules offer nothing else, so a bot never takes the
  * false-pass penalty.
  */
+/**
+ * How far an arm may run before a bot folds it round a corner.
+ *
+ * A tile is four grid units long, so this is about seven tiles — roughly what
+ * fits across a phone. Nothing stops a bot laying a straight line of all
+ * twenty-eight, but then everyone is looking at a chain the width of four
+ * screens, shrunk to nothing. Folding is what people do with a real set on a
+ * real table, for the same reason.
+ */
+const TIDY_SPAN = 28;
+
+/**
+ * Which way to lay the tile.
+ *
+ * Shape is the players' choice now, so a bot has to make one. It carries
+ * straight on while the board is still a comfortable size and turns a corner
+ * once the arm has run far enough, picking whichever direction leaves the
+ * tidiest board. Returns undefined when there is nothing to choose.
+ */
+function tidyDir(ctx: BotContext, tile: TileId, end: End): Dir | undefined {
+  const laid = laidTiles(ctx.board);
+  const openerAt = openerIndexOf(ctx.board, ctx.openerTile);
+  const allowed = directionsAt(laid, openerAt, tile, end);
+  if (allowed.length < 2) return allowed[0];
+
+  // How big the board would be, laid each way. Measuring the real layout
+  // beats guessing: it already knows how doubles sit and how corners turn.
+  const span = (dir: Dir): number => {
+    const next: { id: TileId; dir: Dir }[] =
+      end === 'right' ? [...laid, { id: tile, dir }] : [{ id: tile, dir }, ...laid];
+    const opener = end === 'right' ? openerAt : openerAt + 1;
+    const out = layout(next, opener);
+    return Math.max(out.width, out.height);
+  };
+
+  let best = allowed[0] as Dir;
+  let bestSpan = Infinity;
+  for (const dir of allowed) {
+    const size = span(dir);
+    if (size < bestSpan) {
+      bestSpan = size;
+      best = dir;
+    }
+  }
+  // While the board is still small, prefer carrying straight on even if a
+  // corner would be a shade tidier — a zigzag every tile looks restless.
+  // Straight on is not allowed[0]: the directions come back in compass
+  // order, so it has to be asked for by name.
+  const straight = outwardDir(laid, openerAt, end);
+  if (allowed.includes(straight) && span(straight) <= TIDY_SPAN) return straight;
+  return best;
+}
+
 export function chooseMove(moves: readonly Move[], ctx: BotContext, jitter = 0): Move {
   const plays = moves.filter((m): m is Extract<Move, { kind: 'play' }> => m.kind === 'play');
   if (plays.length === 0) return { kind: 'pass' };
-  if (plays.length === 1) return plays[0] as Move;
+  if (plays.length === 1) {
+    const only = plays[0] as Extract<Move, { kind: 'play' }>;
+    return { ...only, ...dirOf(ctx, only) };
+  }
 
   let best = plays[0] as Extract<Move, { kind: 'play' }>;
   let bestScore = -Infinity;
@@ -166,7 +231,13 @@ export function chooseMove(moves: readonly Move[], ctx: BotContext, jitter = 0):
       best = m;
     }
   }
-  return best;
+  return { ...best, ...dirOf(ctx, best) };
+}
+
+/** `{ dir }` to spread into a move, or nothing when there is no choice. */
+function dirOf(ctx: BotContext, m: Extract<Move, { kind: 'play' }>): { dir?: Dir } {
+  const dir = tidyDir(ctx, m.tile, m.end);
+  return dir === undefined ? {} : { dir };
 }
 
 /** Names for the computer players, kept clearly apart from real ones. */

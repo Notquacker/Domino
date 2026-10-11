@@ -15,12 +15,13 @@ Curaçao-style partnership dominoes:
 - **Nothing tells you what you can play.** The server deliberately does not
   send the list of legal moves, and the board shows no highlighting: choose a
   tile and an end, and find out. A tile that does not fit is refused.
-- **Drag a tile to the end you want.** Pick a tile up — by dragging or by
-  tapping it — and the table splits into two targets, each showing the pip you
-  would be playing against. Drop on one, or tap it. That is the only place the
-  open ends appear: there is no standing readout, so the board is clear until
-  you are actually choosing. On the opening lead, where there is nothing to
-  choose between, the whole table is one target.
+- **Drag a tile where you want it.** Pick a tile up — by dragging or by
+  tapping it — and every spot it could go appears: straight on from either
+  end, or round a corner above or below one. Drop on the one you want, or tap
+  it. The nearest spot wins, so a thumb does not have to be precise. The
+  players make the shape of the chain between them, the way they would with a
+  real set on a real table; nothing folds it for them. On the opening lead,
+  where there is nothing to choose between, the whole table is one target.
 - **Passing is a choice.** You may pass at any time, even holding a playable
   tile. But a pass made on a tile you could have played **loses your team the
   whole round** — you score nothing, even if you went out first, and the other
@@ -250,9 +251,24 @@ npm run dev        # client on :5173, server on :8080
 Tests:
 
 ```bash
-npm test           # rules unit tests + a full end-to-end match over WebSockets
+npm test           # rules, geometry, wire parsing, and a full match over WebSockets
 npm run typecheck
 ```
+
+Two checks drive a real browser, because where a tile *lands* is not something
+a unit test can see. They need Playwright installed (`npm i -D playwright`):
+
+```bash
+npm run build:demo && node scripts/check-placement.mjs    # the pass-and-play demo
+node server/dist/index.js &                               # then, against a live server:
+node scripts/check-client-placement.mjs http://127.0.0.1:3000/
+node scripts/check-keyboard.mjs http://127.0.0.1:3000/    # can you type on a phone?
+```
+
+Each one drops tiles on corners and measures where they ended up relative to
+the tile they were laid against, which is how the fix for a dropped direction
+was found: the move was accepted, the board was sound, and the tile was simply
+somewhere else.
 
 ## Try it without a server
 
@@ -351,30 +367,39 @@ The chain is drawn as one continuous line of dominoes. Every tile is placed
 from the point where the last one ended, so neighbours actually touch — it
 reads as a single connected chain rather than separate rows.
 
-It is laid out around the tile that opened the round, growing both ways from
-it the way a chain spreads across a real table, and a straight run turns a
-corner after **seven tiles**. Because both arms share the opener's row, that
-row holds seven in total rather than seven in each direction.
+**The shape is the players' doing.** Each tile carries the direction it was
+laid in, chosen by whoever laid it, and the table simply draws what they did.
+Nothing folds the chain at a set length or sweeps it into a rectangle. Two
+tables will not look alike, and that is the point: it is the same freedom you
+have pushing tiles around a kitchen table.
 
-**The chain never turns straight after a double.** A double lies across the
-chain rather than along it, so a corner there would fold back through a tile
-that is already crosswise. When a turn falls on one the run carries straight
-on and turns at the next tile, which is why a run occasionally reaches eight.
+It is laid out around the tile that opened the round, growing both ways from
+it, and the geometry works in whole grid units — a tile is 2 units across and
+4 along — so positions are exact and two tiles either touch or they do not.
+
+A direction is only offered when the tile would actually fit there:
+
+- **Never back on itself.** An end grows outward; the way it came is not a
+  direction.
+- **Never straight after a double.** A double lies across the chain rather
+  than along it, so a corner there would fold back through a tile that is
+  already crosswise.
+- **Never onto another tile.** Every candidate is laid out and measured
+  against the tiles already down. A tile with nowhere left to go is not a
+  legal move at all, so the game never offers one it cannot honour.
 
 Whichever way the chain runs, the halves that touch always show the same
 number of pips — the tile is drawn from whichever side meets its neighbour.
-
-Two shapes, switched with the button in the top bar. It is a local preference
-rather than a table rule, so everyone can pick their own.
-
-- **Snaking** turns back on itself, giving the S and Z shapes.
-- **Square** keeps turning the same way, sweeping out a rectangle whose two
-  open ends finish apart.
-
 Tiles turn with each corner and doubles lie across the run, which falls out of
 a single rule: a tile lies across its run, a double along it, and turning the
 chain swaps both. Tiles shrink as the chain grows, so the whole board stays on
 screen without scrolling.
+
+The same walker — `shared/src/geometry.ts` — runs on the server and in both
+clients, so what the table decides and what you see cannot disagree.
+Computer players use it too: they carry straight on while the board is a
+comfortable size and fold a corner once an arm has run far enough, rather than
+laying a line of twenty-eight across four screens.
 
 ## How it is put together
 

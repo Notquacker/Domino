@@ -10,6 +10,13 @@
  */
 
 import {
+  type Dir,
+  type LaidTile,
+  directionsAt,
+  hasRoomAt,
+  outwardDir,
+} from './geometry.js';
+import {
   DOUBLE_SIX,
   HAND_SIZE,
   type Pip,
@@ -51,10 +58,25 @@ export interface BoardTile {
   readonly id: TileId;
   readonly left: Pip;
   readonly right: Pip;
+  /**
+   * Which way this tile was laid, counting outward from the opening tile.
+   * Chosen by the player, which is what lets the table decide the shape
+   * rather than the client laying it out on everyone's behalf.
+   */
+  readonly dir: Dir;
 }
 
 export type Move =
-  | { readonly kind: 'play'; readonly tile: TileId; readonly end: End }
+  | {
+      readonly kind: 'play';
+      readonly tile: TileId;
+      readonly end: End;
+      /**
+       * Which way to lay it. Left out means carry straight on, which is what
+       * a client that does not care about the shape will do.
+       */
+      readonly dir?: Dir;
+    }
   | { readonly kind: 'pass' };
 
 /**
@@ -302,26 +324,74 @@ export function openEnds(board: readonly BoardTile[]): { left: Pip; right: Pip }
  * faces inward. Throws if the tile does not actually match that end — callers
  * are expected to have validated with `legalMoves` first.
  */
+/** The chain as the geometry walker wants it. */
+export function laidTiles(board: readonly BoardTile[]): LaidTile[] {
+  return board.map((t) => ({ id: t.id, dir: t.dir }));
+}
+
+/**
+ * Where the opening tile is in the board array. The chain grows both ways
+ * from it, so it is not simply index zero once the left end has been played
+ * on.
+ */
+export function openerIndexOf(board: readonly BoardTile[], openerTile: TileId | null): number {
+  if (openerTile === null) return 0;
+  const found = board.findIndex((t) => t.id === openerTile);
+  return found < 0 ? 0 : found;
+}
+
+/**
+ * Lay a tile against one end of the chain.
+ *
+ * `dir` is the direction the player chose. Null or an unusable choice falls
+ * back to carrying straight on, and failing that to whatever direction is
+ * actually free — a client that does not care about the shape still gets a
+ * sound board.
+ */
 export function placeTile(
   board: readonly BoardTile[],
   id: TileId,
   end: End,
+  dir?: Dir,
+  openerTile: TileId | null = null,
 ): readonly BoardTile[] {
   const tile = parseTile(id);
   const ends = openEnds(board);
   if (ends === null) {
-    return [{ id, left: tile.low, right: tile.high }];
+    return [{ id, left: tile.low, right: tile.high, dir: 0 }];
   }
+
+  const openerAt = openerIndexOf(board, openerTile);
+  const laid = laidTiles(board);
+  const allowed = directionsAt(laid, openerAt, id, end);
+  // Straight on is the fallback, and on the left arm that is not the end
+  // tile's own direction — see outwardDir.
+  const straight = outwardDir(laid, openerAt, end);
+  const chosen =
+    dir !== undefined && allowed.includes(dir)
+      ? dir
+      : allowed.includes(straight)
+        ? straight
+        : (allowed[0] ?? straight);
+
   if (end === 'left') {
     const match = ends.left;
     // The new tile's right half must touch the board's left end.
-    if (tile.high === match) return [{ id, left: tile.low, right: tile.high }, ...board];
-    if (tile.low === match) return [{ id, left: tile.high, right: tile.low }, ...board];
+    if (tile.high === match) {
+      return [{ id, left: tile.low, right: tile.high, dir: chosen }, ...board];
+    }
+    if (tile.low === match) {
+      return [{ id, left: tile.high, right: tile.low, dir: chosen }, ...board];
+    }
     throw new Error(`tile ${id} does not match left end ${match}`);
   }
   const match = ends.right;
-  if (tile.low === match) return [...board, { id, left: tile.low, right: tile.high }];
-  if (tile.high === match) return [...board, { id, left: tile.high, right: tile.low }];
+  if (tile.low === match) {
+    return [...board, { id, left: tile.low, right: tile.high, dir: chosen }];
+  }
+  if (tile.high === match) {
+    return [...board, { id, left: tile.high, right: tile.low, dir: chosen }];
+  }
   throw new Error(`tile ${id} does not match right end ${match}`);
 }
 
@@ -330,12 +400,21 @@ function handOf(round: RoundState, seat: Seat): readonly TileId[] {
 }
 
 /** Can this tile be laid at this end of the current board? */
-export function fits(board: readonly BoardTile[], id: TileId, end: End): boolean {
+export function fits(
+  board: readonly BoardTile[],
+  id: TileId,
+  end: End,
+  openerTile: TileId | null = null,
+): boolean {
   const ends = openEnds(board);
   if (ends === null) return true;
   const tile = parseTile(id);
   const match = end === 'left' ? ends.left : ends.right;
-  return tile.low === match || tile.high === match;
+  if (tile.low !== match && tile.high !== match) return false;
+  // Matching the number is no longer the whole story. Now that the players
+  // choose the shape, a chain can curl round and leave an end walled in; a
+  // tile with nowhere to go is not a move.
+  return hasRoomAt(laidTiles(board), openerIndexOf(board, openerTile), id, end);
 }
 
 /**
@@ -364,8 +443,12 @@ export function legalMoves(
 
   const moves: Move[] = [];
   for (const id of hand) {
-    if (fits(round.board, id, 'left')) moves.push({ kind: 'play', tile: id, end: 'left' });
-    if (fits(round.board, id, 'right')) moves.push({ kind: 'play', tile: id, end: 'right' });
+    if (fits(round.board, id, 'left', round.openerTile)) {
+      moves.push({ kind: 'play', tile: id, end: 'left' });
+    }
+    if (fits(round.board, id, 'right', round.openerTile)) {
+      moves.push({ kind: 'play', tile: id, end: 'right' });
+    }
   }
   if (moves.length === 0 || !strict) moves.push({ kind: 'pass' });
   return moves;
@@ -376,7 +459,9 @@ export function hasPlayable(round: RoundState, seat: Seat): boolean {
   const ends = openEnds(round.board);
   if (ends === null) return handOf(round, seat).length > 0;
   return handOf(round, seat).some(
-    (id) => fits(round.board, id, 'left') || fits(round.board, id, 'right'),
+    (id) =>
+      fits(round.board, id, 'left', round.openerTile) ||
+      fits(round.board, id, 'right', round.openerTile),
   );
 }
 
@@ -603,15 +688,15 @@ export function applyMove(match: MatchState, seat: Seat, move: Move): MoveOutcom
   // A play that matched both ends and empties the hand is a capicu.
   const bothEnds =
     round.board.length > 0 &&
-    fits(round.board, move.tile, 'left') &&
-    fits(round.board, move.tile, 'right');
+    fits(round.board, move.tile, 'left', round.openerTile) &&
+    fits(round.board, move.tile, 'right', round.openerTile);
 
   const hand = handOf(round, seat);
   if (!hand.includes(move.tile)) throw new RuleError('you do not hold that tile');
 
   const hands = round.hands.map((h, i) => (i === seat ? h.filter((id) => id !== move.tile) : h));
   const openingPlay = round.board.length === 0;
-  const board = placeTile(round.board, move.tile, move.end);
+  const board = placeTile(round.board, move.tile, move.end, move.dir, round.openerTile);
   const played: RoundState = {
     ...round,
     hands,
@@ -645,7 +730,9 @@ function legalMovesWouldPass(round: RoundState, seat: Seat): boolean {
   const hand = handOf(round, seat);
   if (hand.length === 0) return false;
   return !hand.some(
-    (id) => fits(round.board, id, 'left') || fits(round.board, id, 'right'),
+    (id) =>
+      fits(round.board, id, 'left', round.openerTile) ||
+      fits(round.board, id, 'right', round.openerTile),
   );
 }
 

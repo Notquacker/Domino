@@ -168,15 +168,16 @@ describe('seating and teams', () => {
 describe('placing tiles', () => {
   it('flips a tile so the matching pip faces the board', () => {
     const one = placeTile([], '2-4', 'right');
-    assert.deepEqual(one, [{ id: '2-4', left: 2, right: 4 }]);
+    // The opener lies rightward by convention; the shape grows from there.
+    assert.deepEqual(one, [{ id: '2-4', left: 2, right: 4, dir: 0 }]);
 
     // Right end is 4, so 4-6 must be laid 4|6.
     const right = placeTile(one, '4-6', 'right');
-    assert.deepEqual(right[right.length - 1], { id: '4-6', left: 4, right: 6 });
+    assert.deepEqual(right[right.length - 1], { id: '4-6', left: 4, right: 6, dir: 0 });
 
     // Left end is 2, so 0-2 must be laid 0|2 with the 2 facing inward.
     const left = placeTile(one, '0-2', 'left');
-    assert.deepEqual(left[0], { id: '0-2', left: 0, right: 2 });
+    assert.deepEqual(left[0], { id: '0-2', left: 0, right: 2, dir: 2 });
     assertChain(left);
   });
 

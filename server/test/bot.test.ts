@@ -19,11 +19,18 @@ import {
   SEATS,
   applyMove,
   dealRound,
+  isSound,
+  laidTiles,
+  layout,
   legalMoves,
   newMatch,
   openEnds,
+  openerIndexOf,
   seededRng,
 } from '@domino/shared';
+
+/** A move that lays a tile — the half of `Move` these tests are about. */
+type Play = Extract<Move, { kind: 'play' }>;
 import { type BotContext, chooseMove } from '../dist/bot.js';
 
 /** Build a bot's context the way the room does: own hand plus public state. */
@@ -32,6 +39,7 @@ function contextFor(round: RoundState, seat: Seat, voids: Pip[][]): BotContext {
     seat,
     hand: round.hands[seat] ?? [],
     board: round.board,
+    openerTile: round.openerTile,
     ends: openEnds(round.board),
     tilesLeft: SEATS.map((s) => (round.hands[s] ?? []).length),
     voids: voids.map((v) => [...v]),
@@ -157,7 +165,7 @@ describe('how a computer player behaves', () => {
   });
 
   it('goes out when it can rather than holding on', () => {
-    const board: BoardTile[] = [{ id: '3-4', left: 3, right: 4 }];
+    const board: BoardTile[] = [{ id: '3-4', left: 3, right: 4, dir: 0 }];
     const round: RoundState = {
       hands: [['4-5'], [], [], []],
       board,
@@ -169,7 +177,12 @@ describe('how a computer player behaves', () => {
       openerTile: '3-4',
     };
     const move = chooseMove(legalMoves(round, 0), contextFor(round, 0, [[], [], [], []]), 0);
-    assert.deepEqual(move, { kind: 'play', tile: '4-5', end: 'right' } satisfies Move);
+    // The direction it picks is the shape question, tested on its own below.
+    assert.equal(move.kind, 'play');
+    assert.deepEqual(
+      { tile: (move as Play).tile, end: (move as Play).end },
+      { tile: '4-5', end: 'right' },
+    );
   });
 
   it('prefers the end an opponent is known to be stuck on', () => {
@@ -178,8 +191,8 @@ describe('how a computer player behaves', () => {
     // already passed on 5s, so the 5 shuts them out — and 3-6 is the heavier
     // tile, so the shedding weight alone would have picked the other one.
     const board: BoardTile[] = [
-      { id: '2-2', left: 2, right: 2 },
-      { id: '2-6', left: 2, right: 6 },
+      { id: '2-2', left: 2, right: 2, dir: 0 },
+      { id: '2-6', left: 2, right: 6, dir: 0 },
     ];
     const filler = ['0-0', '0-0', '0-0', '0-0'];
     const round: RoundState = {
@@ -194,7 +207,44 @@ describe('how a computer player behaves', () => {
     };
     const voids: Pip[][] = [[], [5], [], []];
     const move = chooseMove(legalMoves(round, 0), contextFor(round, 0, voids), 0);
-    assert.deepEqual(move, { kind: 'play', tile: '2-5', end: 'left' } satisfies Move);
+    assert.equal(move.kind, 'play');
+    assert.deepEqual(
+      { tile: (move as Play).tile, end: (move as Play).end },
+      { tile: '2-5', end: 'left' },
+    );
+  });
+
+  it('folds the chain round instead of running off the table', () => {
+    // Shape is the players' choice now, so a bot has to make one. Left to go
+    // straight forever it would lay a line of twenty-eight tiles — four
+    // screens wide, and unreadable once it is shrunk to fit.
+    const rng = seededRng(20260411);
+    let match = newMatch(DEFAULT_RULES, rng);
+    for (let i = 0; i < 400 && match.phase === 'playing' && match.round !== null; i++) {
+      const round = match.round;
+      const seat = round.turn;
+      const ctx: BotContext = {
+        seat,
+        hand: round.hands[seat] ?? [],
+        board: round.board,
+        openerTile: round.openerTile,
+        ends: openEnds(round.board),
+        tilesLeft: SEATS.map((s) => (round.hands[s] ?? []).length),
+        voids: [[], [], [], []],
+        caught: [],
+        rules: DEFAULT_RULES,
+      };
+      match = applyMove(match, seat, chooseMove(legalMoves(round, seat), ctx, 0)).match;
+      const board = match.round?.board ?? [];
+      if (board.length < 2) continue;
+      const out = layout(laidTiles(board), openerIndexOf(board, match.round?.openerTile ?? null));
+      assert.ok(isSound(out), `${board.length} tiles in and something is stacked`);
+      // A tile is 4 units long; 40 is ten tiles across, with room to spare.
+      assert.ok(
+        out.width <= 40 && out.height <= 40,
+        `the chain ran to ${out.width}x${out.height} units with ${board.length} tiles down`,
+      );
+    }
   });
 });
 
@@ -267,6 +317,7 @@ describe('a computer player catching a cheat', () => {
       seat: 0 as Seat,
       hand: ['1-1'],
       board: [],
+      openerTile: null,
       ends: null,
       tilesLeft: [1, 1, 1, 1],
       voids: [[], [], [], []],

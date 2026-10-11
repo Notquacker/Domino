@@ -8,6 +8,10 @@
 
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { once } from 'node:events';
+import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { WebSocket } from 'ws';
 import type {
@@ -50,6 +54,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const WS_URL = `ws://127.0.0.1:${PORT}/ws`;
 
 let server: ChildProcess;
+let dataDir = '';
 
 /** Every state frame any client received, kept for the leak audit. */
 const frames: { seat: number | null; raw: string }[] = [];
@@ -161,16 +166,36 @@ async function waitForServer(): Promise<void> {
 }
 
 before(async () => {
+  // A throwaway account file per run. Sharing the real one made the suite
+  // pass once and then fail for good: the second run tried to register a
+  // name the first run had already taken, and sat there until it timed out.
+  // Blank SUPABASE_* too, so a configured machine still tests the file store.
+  dataDir = mkdtempSync(join(tmpdir(), 'domino-e2e-'));
   server = spawn(process.execPath, ['server/dist/index.js'], {
-    env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1' },
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      HOST: '127.0.0.1',
+      DATA_DIR: dataDir,
+      SUPABASE_URL: '',
+      SUPABASE_SERVICE_ROLE_KEY: '',
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stderr?.on('data', (d) => process.stderr.write(`[server] ${d}`));
   await waitForServer();
 });
 
-after(() => {
-  server?.kill('SIGTERM');
+after(async () => {
+  // Wait for it to actually go before clearing the directory: a server still
+  // flushing its account file recreates what has just been deleted, and the
+  // remove fails on a directory that filled up again underneath it.
+  if (server !== undefined && server.exitCode === null) {
+    const gone = once(server, 'exit');
+    server.kill('SIGTERM');
+    await Promise.race([gone, new Promise((r) => setTimeout(r, 2000))]);
+  }
+  if (dataDir !== '') rmSync(dataDir, { recursive: true, force: true });
 });
 
 describe('a full four-player match over the wire', () => {

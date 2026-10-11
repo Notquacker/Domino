@@ -10,6 +10,7 @@
 
 import type {
   AccountInfo,
+  Dir,
   End,
   HouseRules,
   LeaderRow,
@@ -18,7 +19,17 @@ import type {
   ServerMessage,
   TileId,
 } from '@domino/shared';
-import { TEAM_NAMES, teamOf } from '@domino/shared';
+import {
+  TEAM_NAMES,
+  // The geometry lives in the engine now, so the server and every client
+  // agree on where a tile lands. `layout` is imported under another name
+  // because this file already has a `layout` of its own.
+  layout as layoutBoard,
+  laidTiles,
+  openerIndexOf,
+  slotsFor,
+  teamOf,
+} from '@domino/shared';
 import { Net } from './net.js';
 import {
   type Account,
@@ -123,11 +134,11 @@ let rejected: TileId | null = null;
 /** Tile currently being dragged out of the hand, if any. */
 let dragTile: TileId | null = null;
 /** Which drop zone the finger is over while dragging. */
-let dragOver: End | null = null;
+/** The slot the finger is currently nearest, so it can be shown lighting up. */
+let dragOver: { end: End; dir: Dir } | null = null;
 let dragGhost: HTMLElement | null = null;
 let muted = recall('domino.muted') === '1';
 /** How the chain is drawn. A local taste, not a table rule. */
-let layout: Layout = recall('domino.layout') === 'square' ? 'square' : 'snake';
 /** True once somebody has slammed this table; cleared on the next deal. */
 let messy = false;
 let claimNotice = '';
@@ -387,22 +398,44 @@ function applyMess(node: HTMLElement, id: TileId): void {
  * Attempt a placement. The server decides whether it fits — the page is not
  * told in advance, because working that out is part of the game.
  */
-function play(tile: TileId, end: End): void {
+function play(tile: TileId, end: End, dir?: Dir): void {
   pending = { tile, end };
   selected = null;
   sfx('place');
-  net.send({ t: 'move', move: { kind: 'play', tile, end } });
+  net.send({
+    t: 'move',
+    move: { kind: 'play', tile, end, ...(dir === undefined ? {} : { dir }) },
+  });
 }
 
-/** Which drop zone, if any, is under this point. */
-function zoneAt(x: number, y: number): End | null {
-  for (const node of document.querySelectorAll('.dropzone')) {
+/**
+ * The slot nearest this point, if it is near enough to have been meant.
+ *
+ * Nobody can hit a small target with a thumb on a moving board, so rather
+ * than asking the finger to land inside a box, the nearest slot wins. The
+ * cut-off is generous but not unlimited: let go somewhere unrelated and the
+ * tile goes back to your hand rather than landing somewhere you did not pick.
+ */
+function slotAt(x: number, y: number): { end: End; dir: Dir } | null {
+  let best: { end: End; dir: Dir } | null = null;
+  let bestDistance = Infinity;
+  for (const node of document.querySelectorAll('.slot')) {
     const r = node.getBoundingClientRect();
-    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-      return (node as HTMLElement).dataset['end'] === 'left' ? 'left' : 'right';
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const distance = Math.hypot(x - cx, y - cy);
+    // Within a tile-and-a-half of the middle of a slot counts as aiming at it.
+    const reach = Math.max(r.width, r.height) * 1.5;
+    if (distance < bestDistance && distance <= reach) {
+      bestDistance = distance;
+      const el = node as HTMLElement;
+      best = {
+        end: el.dataset['end'] === 'left' ? 'left' : 'right',
+        dir: Number(el.dataset['dir'] ?? 0) as Dir,
+      };
     }
   }
-  return null;
+  return best;
 }
 
 function clearDrag(): void {
@@ -441,8 +474,11 @@ function beginDrag(id: TileId, ev: PointerEvent, onTap: () => void): void {
       dragGhost.style.left = `${e.clientX}px`;
       dragGhost.style.top = `${e.clientY}px`;
     }
-    const over = zoneAt(e.clientX, e.clientY);
-    if (over !== dragOver) {
+    const over = slotAt(e.clientX, e.clientY);
+    const changed =
+      (over === null) !== (dragOver === null) ||
+      (over !== null && dragOver !== null && (over.end !== dragOver.end || over.dir !== dragOver.dir));
+    if (changed) {
       dragOver = over;
       render();
     }
@@ -456,9 +492,9 @@ function beginDrag(id: TileId, ev: PointerEvent, onTap: () => void): void {
       onTap();
       return;
     }
-    const end = zoneAt(e.clientX, e.clientY);
+    const slot = slotAt(e.clientX, e.clientY);
     clearDrag();
-    if (end !== null) play(id, end);
+    if (slot !== null) play(id, slot.end, slot.dir);
     else render();
   };
 
@@ -1300,16 +1336,6 @@ function renderTopbar(v: PlayerView): HTMLElement {
   score.appendChild(el('span', undefined, ` to ${v.rules.targetScore}`));
   bar.appendChild(score);
 
-  const shape = el('button', 'iconbtn', layout === 'square' ? '⬛' : '〰️') as HTMLButtonElement;
-  shape.title = layout === 'square' ? 'Square layout' : 'Snaking layout';
-  shape.setAttribute('aria-label', 'Change how the chain is laid out');
-  shape.addEventListener('click', () => {
-    layout = layout === 'snake' ? 'square' : 'snake';
-    remember('domino.layout', layout);
-    render();
-  });
-  bar.appendChild(shape);
-
   const sound = el('button', 'iconbtn', muted ? '🔇' : '🔊') as HTMLButtonElement;
   sound.title = muted ? 'Sound off' : 'Sound on';
   sound.setAttribute('aria-label', muted ? 'Turn sound on' : 'Turn sound off');
@@ -1367,13 +1393,7 @@ function renderOpponents(v: PlayerView): HTMLElement {
 
 /** Base tile dimensions in CSS pixels, matching the stylesheet. */
 const TILE_SHORT = 40;
-const TILE_LONG = 78;
 const TILE_GAP = 3;
-
-export type Layout = 'snake' | 'square';
-
-/** Longest straight run before the chain has to turn a corner. */
-const MAX_RUN = 7;
 
 /**
  * Shrink the tiles as the chain grows so the whole board keeps fitting on
@@ -1386,234 +1406,6 @@ function chainScale(count: number): number {
   return 0.6;
 }
 
-type Placed = PlayerView['board'][number];
-
-interface Spot {
-  /** Position in the chain, so the tiles can be drawn in order. */
-  readonly index: number;
-  readonly tile: Placed;
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
-  /** True when this stretch of the chain runs up or down the screen. */
-  readonly vertical: boolean;
-  /** True when the chain is travelling left or up, so the halves swap. */
-  readonly flipped: boolean;
-}
-
-/** 0 right, 1 down, 2 left, 3 up. */
-type Dir = 0 | 1 | 2 | 3;
-
-/**
- * Lay the chain out as one continuous line of dominoes.
- *
- * Every tile is positioned from the point where the previous one ended, so
- * neighbours actually touch — the chain reads as a single connected line
- * rather than separate strips. It starts at the tile that opened the round and
- * grows both ways from it, the way a real chain spreads across a table, and
- * turns a corner once a straight run reaches MAX_RUN.
- */
-function layoutChain(
-  board: readonly Placed[],
-  openerId: string | null,
-  mode: Layout,
-  scale: number,
-): { spots: Spot[]; width: number; height: number } {
-  const long = TILE_LONG * scale;
-  const short = TILE_SHORT * scale;
-  const spots: Spot[] = [];
-  if (board.length === 0) return { spots, width: 0, height: 0 };
-
-  const openerIndex = Math.max(
-    0,
-    openerId === null ? 0 : board.findIndex((t) => t.id === openerId),
-  );
-
-  /** How long a run may be before turning. Snake rows stack via a single
-   * perpendicular corner tile; a square turns after a full run each time. */
-  const runLimit = (dir: Dir): number =>
-    mode === 'square' ? MAX_RUN : dir === 0 || dir === 2 ? MAX_RUN : 1;
-
-  // The opener's row is shared by both arms, so each gets half of it. Without
-  // this the middle row runs to MAX_RUN in each direction — a row of thirteen,
-  // and a board so wide it has to be shrunk to stay on screen.
-  const halfRun = Math.max(1, Math.floor((MAX_RUN - 1) / 2));
-
-  const size = (tile: Placed): { along: number; across: number } => {
-    const isDouble = tile.left === tile.right;
-    return isDouble ? { along: short, across: long } : { along: long, across: short };
-  };
-
-  /** Unit step for each direction: right, down, left, up. */
-  const STEP: readonly (readonly [number, number])[] = [
-    [1, 0],
-    [0, 1],
-    [-1, 0],
-    [0, -1],
-  ];
-
-  /**
-   * Move the cursor round a corner.
-   *
-   * Left alone, the turning tile would be centred on the previous tile's far
-   * edge and so lap back over it. Stepping back along the old direction by
-   * half the new tile's width, and on along the new direction by half the old
-   * tile's width, sets the two tiles corner to corner: they still touch, but
-   * nothing is laid on top of anything.
-   */
-  /**
-   * Which way the chain turns next.
-   *
-   * Snake mode serpentines: every horizontal run steps one tile across and
-   * then doubles back the other way, so the chain never climbs into a row it
-   * has already filled. Cycling the four directions instead would walk it
-   * straight back over its own tiles. Square mode does keep turning the same
-   * way, which is what traces the ring.
-   */
-  const nextDir = (d: Dir, lastH: Dir, vert: Dir): Dir =>
-    mode === 'square'
-      ? (((d + 1) % 4) as Dir)
-      : d === vert
-        ? ((lastH === 0 ? 2 : 0) as Dir)
-        : vert;
-
-  const turnCursor = (
-    at: { x: number; y: number },
-    from: Dir,
-    to: Dir,
-    oldAcross: number,
-    newAcross: number,
-  ): { x: number; y: number } => {
-    const o = STEP[from] as readonly [number, number];
-    const n = STEP[to] as readonly [number, number];
-    return {
-      x: at.x - o[0] * (newAcross / 2) + n[0] * (oldAcross / 2),
-      y: at.y - o[1] * (newAcross / 2) + n[1] * (oldAcross / 2),
-    };
-  };
-
-  /**
-   * Place one tile so its near edge meets `cursor`, and return the far edge.
-   *
-   * `backward` says which way along the chain we are walking, and it decides
-   * which half of the tile has to face the one already down. Walking forward,
-   * a tile meets its neighbour by its LEFT half (board[i-1].right ===
-   * board[i].left); walking back from the opener it meets by its RIGHT half.
-   * Get this wrong and the board draws with mismatched pips touching.
-   */
-  const put = (
-    tile: Placed,
-    index: number,
-    dir: Dir,
-    cx: number,
-    cy: number,
-    backward = false,
-  ): { x: number; y: number } => {
-    const { along, across } = size(tile);
-    const vertical = dir === 1 || dir === 3;
-    const w = vertical ? across : along;
-    const h = vertical ? along : across;
-    const x = dir === 2 ? cx - along : dir === 0 ? cx : cx - across / 2;
-    const y = dir === 3 ? cy - along : dir === 1 ? cy : cy - across / 2;
-    // A tile renders its first half at the top or left. Travelling left or up
-    // puts the near end on the right or bottom, so the halves swap — and the
-    // backward arm meets its neighbour by the other half, inverting it again.
-    const nearIsSecondHalf = dir === 2 || dir === 3;
-    spots.push({
-      index,
-      tile,
-      x,
-      y,
-      w,
-      h,
-      vertical,
-      flipped: backward ? !nearIsSecondHalf : nearIsSecondHalf,
-    });
-    return {
-      x: cx + (dir === 0 ? along : dir === 2 ? -along : 0),
-      y: cy + (dir === 1 ? along : dir === 3 ? -along : 0),
-    };
-  };
-
-  // The opener sits at the origin, lying along the chain.
-  let cursor = put(board[openerIndex] as Placed, openerIndex, 0, 0, 0);
-  let lastAcross = size(board[openerIndex] as Placed).across;
-
-  /**
-   * A double lies across the chain rather than along it, so the chain can
-   * neither turn immediately after one nor turn on one: either way the corner
-   * folds a crosswise tile over its neighbour, blanketing the whole of it
-   * instead of meeting its end. When a turn falls on a double the run carries
-   * straight on and turns at the next ordinary tile instead.
-   */
-  const isDouble = (tile: Placed | undefined): boolean =>
-    tile !== undefined && tile.left === tile.right;
-
-  // Forward arm: the right-hand end of the chain.
-  let dir: Dir = 0;
-  let run = 1;
-  let limit = halfRun + 1;
-  let lastH: Dir = 0;
-  for (let i = openerIndex + 1; i < board.length; i++) {
-    const tile = board[i] as Placed;
-    if (run >= limit && !isDouble(board[i - 1]) && !isDouble(tile)) {
-      const next = nextDir(dir, lastH, 1);
-      if (next === 0 || next === 2) lastH = next;
-      cursor = turnCursor(cursor, dir, next, lastAcross, size(tile).across);
-      dir = next;
-      run = 0;
-      limit = runLimit(dir);
-    }
-    cursor = put(tile, i, dir, cursor.x, cursor.y);
-    lastAcross = size(tile).across;
-    run++;
-  }
-
-  // Backward arm: the left-hand end, growing the other way from the opener.
-  // It turns the same way round, so the two arms sweep out the loop together
-  // and finish apart — the shape of a chain that has wrapped the table.
-  let back: Dir = 2;
-  let backRun = 1;
-  let backLimit = MAX_RUN - halfRun;
-  let backCursor = { x: 0, y: 0 };
-  let backAcross = size(board[openerIndex] as Placed).across;
-  let lastBackH: Dir = 2;
-  for (let i = openerIndex - 1; i >= 0; i--) {
-    const tile = board[i] as Placed;
-    if (backRun >= backLimit && !isDouble(board[i + 1]) && !isDouble(tile)) {
-      const next = nextDir(back, lastBackH, 3);
-      if (next === 0 || next === 2) lastBackH = next;
-      backCursor = turnCursor(backCursor, back, next, backAcross, size(tile).across);
-      back = next;
-      backRun = 0;
-      backLimit = runLimit(back);
-    }
-    backCursor = put(tile, i, back, backCursor.x, backCursor.y, true);
-    backAcross = size(tile).across;
-    backRun++;
-  }
-
-  // Shift everything positive and report the bounding box.
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const spot of spots) {
-    minX = Math.min(minX, spot.x);
-    minY = Math.min(minY, spot.y);
-    maxX = Math.max(maxX, spot.x + spot.w);
-    maxY = Math.max(maxY, spot.y + spot.h);
-  }
-  // Draw in chain order, not the order the two arms were walked, so the DOM
-  // reads along the chain like the tiles do.
-  const shifted = spots
-    .map((spot) => ({ ...spot, x: spot.x - minX, y: spot.y - minY }))
-    .sort((a, b) => a.index - b.index);
-  spots.length = 0;
-  spots.push(...shifted);
-  return { spots, width: maxX - minX, height: maxY - minY };
-}
 
 function renderTable(v: PlayerView): HTMLElement {
   const box = el('div', 'table');
@@ -1664,57 +1456,83 @@ function renderTable(v: PlayerView): HTMLElement {
   const grewLeft = ids.length > lastBoard.length && !grewRight;
   const freshId = grewRight ? ids[ids.length - 1] : grewLeft ? ids[0] : null;
 
-  // Shrink until the whole chain fits the space available.
+  // The shape of the chain is the table's doing, not this client's: every
+  // tile carries the direction it was laid in. All that happens here is
+  // scaling grid units to pixels.
+  const openerAt = openerIndexOf(v.board, v.openerTile);
+  const tiles = laidTiles(v.board);
+  const aiming = dragTile ?? selected;
+  const slots = aiming === null ? [] : slotsFor(tiles, openerAt, aiming);
+
+  // Shrink until the chain — and anywhere the held tile could go — fits.
   const roomW = Math.max(160, Math.min(window.innerWidth, 920) - 28);
   const roomH = Math.max(150, Math.min(430, window.innerHeight - 380));
-  let scale = chainScale(v.board.length);
-  let plan = layoutChain(v.board, v.openerTile, layout, scale);
-  for (let guard = 0; guard < 8 && (plan.width > roomW || plan.height > roomH); guard++) {
-    scale *= Math.min(roomW / plan.width, roomH / plan.height, 0.92);
-    plan = layoutChain(v.board, v.openerTile, layout, scale);
+  const plan = layoutBoard(tiles, openerAt);
+
+  // Slots can sit outside the current bounds, so the frame covers both. It
+  // is worked out once per render and does not move while a drag is going
+  // on, which matters when a finger is already heading somewhere.
+  let minX = 0;
+  let minY = 0;
+  let maxX = plan.width;
+  let maxY = plan.height;
+  for (const slot of slots) {
+    minX = Math.min(minX, slot.x);
+    minY = Math.min(minY, slot.y);
+    maxX = Math.max(maxX, slot.x + slot.w);
+    maxY = Math.max(maxY, slot.y + slot.h);
   }
+  const unitsW = Math.max(maxX - minX, 1);
+  const unitsH = Math.max(maxY - minY, 1);
+
+  // A tile is SHORT (2) units across, so a unit is half a tile's short side.
+  const base = TILE_SHORT / 2;
+  let scale = chainScale(v.board.length);
+  scale = Math.min(scale, roomW / (unitsW * base), roomH / (unitsH * base));
+  const unit = base * scale;
   chain.style.setProperty('--tile-scale', String(scale));
 
   const pitch = el('div', 'pitch');
-  pitch.style.width = `${Math.max(plan.width, 1)}px`;
-  pitch.style.height = `${Math.max(plan.height, 1)}px`;
-  for (const spot of plan.spots) {
-    const node = boardTile(spot.tile, spot.tile.id === freshId, spot.flipped, spot.vertical);
-    node.style.left = `${spot.x}px`;
-    node.style.top = `${spot.y}px`;
-    node.style.width = `${spot.w}px`;
-    node.style.height = `${spot.h}px`;
-    if (spot.tile.id === v.openerTile) node.classList.add('opener');
-    if (messy) applyMess(node, spot.tile.id);
+  pitch.style.width = `${unitsW * unit}px`;
+  pitch.style.height = `${unitsH * unit}px`;
+
+  for (const spot of plan.placements) {
+    const tile = v.board[spot.index] as PlayerView['board'][number];
+    const node = boardTile(tile, tile.id === freshId, spot.flipped, spot.vertical);
+    node.style.left = `${(spot.x - minX) * unit}px`;
+    node.style.top = `${(spot.y - minY) * unit}px`;
+    node.style.width = `${spot.w * unit}px`;
+    node.style.height = `${spot.h * unit}px`;
+    if (tile.id === v.openerTile) node.classList.add('opener');
+    if (messy) applyMess(node, tile.id);
     pitch.appendChild(node);
   }
-  chain.appendChild(pitch);
 
-  box.appendChild(chain);
-
-  // Once a tile is in hand — dragged or tapped — the table becomes two
-  // targets, each showing the pip you would be playing against. That is the
-  // only place the open ends appear; there is no separate readout.
-  const aiming = dragTile ?? selected;
-
-  if (aiming !== null && v.ends !== null) {
-    for (const end of ['left', 'right'] as End[]) {
-      const pip = end === 'left' ? v.ends.left : v.ends.right;
-      const tappable = dragTile === null;
-      const zone = el(
-        tappable ? 'button' : 'div',
-        `dropzone ${end}${dragOver === end ? ' over' : ''}${tappable ? ' tappable' : ''}`,
-      );
-      zone.dataset['end'] = end;
-      zone.appendChild(el('span', 'zonelabel', end === 'left' ? 'LEFT' : 'RIGHT'));
-      zone.appendChild(el('span', 'zonepip', String(pip)));
-      if (tappable) {
-        zone.setAttribute('aria-label', `Play on the ${end} end, against a ${pip}`);
-        zone.addEventListener('click', () => play(aiming, end));
-      }
-      box.appendChild(zone);
+  // Everywhere the held tile could go: above, beside or below an end. Drag it
+  // to the one you want — the nearest wins, so a thumb does not have to be
+  // precise — or tap one.
+  for (const slot of slots) {
+    const lit = dragOver !== null && dragOver.end === slot.end && dragOver.dir === slot.dir;
+    const tappable = dragTile === null;
+    const node = el(
+      tappable ? 'button' : 'div',
+      `slot${lit ? ' over' : ''}${tappable ? ' tappable' : ''}`,
+    );
+    node.dataset['end'] = slot.end;
+    node.dataset['dir'] = String(slot.dir);
+    node.style.left = `${(slot.x - minX) * unit}px`;
+    node.style.top = `${(slot.y - minY) * unit}px`;
+    node.style.width = `${slot.w * unit}px`;
+    node.style.height = `${slot.h * unit}px`;
+    if (tappable && aiming !== null) {
+      node.setAttribute('aria-label', `Lay it here, on the ${slot.end} end`);
+      node.addEventListener('click', () => play(aiming, slot.end, slot.dir));
     }
+    pitch.appendChild(node);
   }
+
+  chain.appendChild(pitch);
+  box.appendChild(chain);
   lastBoard = ids;
   return box;
 }
@@ -1794,7 +1612,7 @@ function renderHand(v: PlayerView): HTMLElement {
   const bar = el('div', 'handbar');
   if (myTurn()) {
     if (selected !== null) {
-      bar.appendChild(el('span', 'hint', 'Now tap the end you want.'));
+      bar.appendChild(el('span', 'hint', 'Now tap one of the spots.'));
       const cancel = el('button', 'ghost small', 'Cancel') as HTMLButtonElement;
       cancel.addEventListener('click', () => {
         selected = null;
@@ -1808,7 +1626,7 @@ function renderHand(v: PlayerView): HTMLElement {
           'hint',
           v.board.length === 0
             ? 'Pick a tile, then lay it down.'
-            : 'Drag a tile to an end — or tap it, then tap an end.',
+            : 'Drag a tile where you want it — or tap it, then tap a spot.',
         ),
       );
     }

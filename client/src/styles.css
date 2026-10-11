@@ -281,7 +281,18 @@ input::placeholder { color: var(--muted); }
   scrollbar-width: none;
 }
 .hand::-webkit-scrollbar { display: none; }
-.handbar { display: flex; gap: 8px; justify-content: center; padding: 8px 14px 0; flex-wrap: wrap; }
+.handbar {
+  display: flex; gap: 8px; justify-content: center; align-items: center;
+  padding: 8px 14px 0; flex-wrap: wrap;
+  /*
+   * Room for two lines of hint whatever the hint says.
+   * Without this the bar grew the moment a tile left the hand — the text
+   * changes — which pushed the table up by a dozen pixels. The spot you were
+   * aiming at moved out from under your thumb mid-drag.
+   */
+  min-height: 52px;
+}
+.handbar .hint { flex: 1 1 100%; }
 
 /* ---------------- tiles ---------------- */
 
@@ -501,32 +512,66 @@ body.shaking { animation: shake 0.62s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
   .chain.messy .tile { transition: none; }
 }
 
-/* ---------------- drag to an end ---------------- */
+/* ---------------- drag a tile where you want it ---------------- */
 
-/* While a tile is in the air the table becomes two big targets. */
+/*
+ * A spot the held tile could go: straight on, or round a corner above or
+ * below an end. They only appear while a tile is held, so the table is not
+ * cluttered with dashes the rest of the time.
+ */
+.slot {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px dashed #ffffff3d;
+  border-radius: 7px;
+  background: #ffffff0a;
+  pointer-events: none;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.slot.over {
+  border-color: var(--gold);
+  border-style: solid;
+  background: #e0b25233;
+  box-shadow: 0 0 0 1px #e0b25255 inset;
+}
+/* A spot you can also tap, for anyone who prefers pick-then-place. */
+.slot.tappable {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+.slot.tappable:hover, .slot.tappable:focus-visible {
+  border-color: var(--gold);
+  background: #e0b25226;
+}
+
+/* The opening lead has no ends to choose between, so the table is one target. */
 .dropzone {
-  position: absolute; top: 0; bottom: 0; width: 50%;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 4px; pointer-events: none;
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
   border: 2px dashed #ffffff33;
+  border-radius: 12px;
   background: #ffffff08;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
-.dropzone.left { left: 0; border-right: none; border-radius: 0 12px 12px 0; }
-.dropzone.right { right: 0; border-left: none; border-radius: 12px 0 0 12px; }
-.dropzone.over {
-  border-color: var(--gold);
-  background: #e0b25230;
-}
+.dropzone.over { border-color: var(--gold); background: #e0b25230; }
 .zonelabel {
   font-size: 12px; letter-spacing: 0.14em; font-weight: 700; color: var(--muted);
 }
 .dropzone.over .zonelabel { color: var(--gold); }
-.zonepip {
-  font-size: 30px; font-weight: 800; color: var(--text); opacity: 0.55;
-  font-variant-numeric: tabular-nums;
+.dropzone.tappable {
+  pointer-events: auto;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  box-shadow: none;
 }
-.dropzone.over .zonepip { color: var(--gold); opacity: 1; }
+.dropzone.tappable:hover, .dropzone.tappable:focus-visible {
+  border-color: var(--gold);
+  background: #e0b25226;
+}
 
 /* Where the dragged tile came from: an empty socket, not a copy of it. */
 .tile.lifted {
@@ -546,41 +591,6 @@ body.shaking { animation: shake 0.62s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
 
 .table { position: relative; }
 .hand .tile.inhand { touch-action: none; }
-
-/* A drop zone you can also tap, for the pick-then-place flow. */
-.dropzone.tappable {
-  pointer-events: auto;
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
-  box-shadow: none;
-}
-.dropzone.tappable:hover, .dropzone.tappable:focus-visible {
-  border-color: var(--gold);
-  background: #e0b25226;
-}
-.dropzone.tappable:hover .zonepip, .dropzone.tappable:focus-visible .zonepip {
-  color: var(--gold); opacity: 1;
-}
-
-/* A drop zone you can also tap, for the pick-then-place flow. */
-.dropzone.tappable {
-  pointer-events: auto;
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
-  box-shadow: none;
-}
-.dropzone.tappable:hover, .dropzone.tappable:focus-visible {
-  border-color: var(--gold);
-  background: #e0b25226;
-}
-.dropzone.tappable:hover .zonepip, .dropzone.tappable:focus-visible .zonepip {
-  color: var(--gold); opacity: 1;
-}
-
-/* The opening lead: one target covering the table, since there is no choice. */
-.dropzone.lead { left: 0; width: 100%; border-radius: 12px; }
 
 /* Calling someone out is a gamble, so it does not look like the other buttons. */
 .danger { border-color: #e2795c66; color: #e9937b; }

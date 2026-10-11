@@ -31,7 +31,6 @@
     refused: null,
     dragTile: null,
     dragOver: null,
-    layout: 'snake',
     messy: false,
     accusing: false,
     smashed: false,
@@ -92,7 +91,11 @@
     var isDouble = p.left === p.right;
     // A tile lies across the run; a double lies along it. Turning the chain
     // swaps both, which is exactly XOR.
-    return tileNode(near, far, isDouble !== !!runsVertically, 'board' + (fresh ? ' fresh' : ''));
+    var node = tileNode(near, far, isDouble !== !!runsVertically, 'board' + (fresh ? ' fresh' : ''));
+    // The board is in front of everyone, so naming the tiles on it gives
+    // nothing away — and it lets a check read where each one ended up.
+    node.setAttribute('data-tile', p.id);
+    return node;
   }
 
   /** Knock a tile askew, deterministically so the mess holds still. */
@@ -107,6 +110,9 @@
   function handTile(id, state) {
     var t = D.parseTile(id), n = tileNode(t.low, t.high, true, 'inhand ' + state);
     if (state !== 'dead') { n.tabIndex = 0; n.setAttribute('role', 'button'); }
+    // Everyone shares this screen, so naming the tile hides nothing — and it
+    // lets a check follow one particular tile from a hand onto the table.
+    n.setAttribute('data-tile', id);
     return n;
   }
   function backs(n) {
@@ -131,9 +137,11 @@
    * Try a placement. Nothing told you whether it fits — that is the game — so
    * a refusal is ordinary and just shakes the tile.
    */
-  function play(id, end) {
+  function play(id, end, dir) {
     try {
-      S.match = D.applyMove(S.match, turn(), { kind: 'play', tile: id, end: end }).match;
+      var move = { kind: 'play', tile: id, end: end };
+      if (dir !== undefined && dir !== null) move.dir = dir;
+      S.match = D.applyMove(S.match, turn(), move).match;
       afterMove();
     } catch (e) {
       S.refused = id;
@@ -142,16 +150,38 @@
       setTimeout(function () { S.refused = null; render(); }, 600);
     }
   }
-  /** Which drop zone, if any, is under this point. */
-  function zoneAt(x, y) {
-    var zones = document.querySelectorAll('.dropzone');
-    for (var i = 0; i < zones.length; i++) {
-      var r = zones[i].getBoundingClientRect();
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-        return zones[i].getAttribute('data-end');
+  /**
+   * The spot nearest this point, if it is near enough to have been meant.
+   *
+   * Nobody hits a small target with a thumb, so the nearest spot wins rather
+   * than asking the finger to land inside a box. The reach is generous but
+   * not unlimited: let go somewhere unrelated and the tile goes back.
+   */
+  function slotAt(x, y) {
+    var nodes = document.querySelectorAll('.slot, .dropzone');
+    var best = null, bestDistance = Infinity;
+    for (var i = 0; i < nodes.length; i++) {
+      var r = nodes[i].getBoundingClientRect();
+      var dx = x - (r.left + r.width / 2);
+      var dy = y - (r.top + r.height / 2);
+      var distance = Math.hypot(dx, dy);
+      var reach = Math.max(r.width, r.height) * 1.5;
+      if (distance < bestDistance && distance <= reach) {
+        bestDistance = distance;
+        var dir = nodes[i].getAttribute('data-dir');
+        best = {
+          end: nodes[i].getAttribute('data-end') === 'left' ? 'left' : 'right',
+          dir: dir === null ? null : Number(dir)
+        };
       }
     }
-    return null;
+    return best;
+  }
+
+  /** Is this the spot the finger is currently over? */
+  function sameSlot(a, b) {
+    if (a === null || b === null) return a === b;
+    return a.end === b.end && a.dir === b.dir;
   }
 
   function clearDrag() {
@@ -180,15 +210,15 @@
         render();
       }
       if (dragGhost) { dragGhost.style.left = e.clientX + 'px'; dragGhost.style.top = e.clientY + 'px'; }
-      var over = zoneAt(e.clientX, e.clientY);
-      if (over !== S.dragOver) { S.dragOver = over; render(); }
+      var over = slotAt(e.clientX, e.clientY);
+      if (!sameSlot(over, S.dragOver)) { S.dragOver = over; render(); }
     }
     function finish(e) {
       detach();
       if (!dragging) { onTap(); return; }
-      var end = zoneAt(e.clientX, e.clientY);
+      var spot = slotAt(e.clientX, e.clientY);
       clearDrag();
-      if (end) play(id, end); else render();
+      if (spot) play(id, spot.end, spot.dir); else render();
     }
     function cancel() { detach(); clearDrag(); render(); }
     function detach() {
@@ -380,13 +410,6 @@
     line.appendChild(b);
     line.appendChild(el('small', null, 'to ' + S.rules.targetScore));
     bar.appendChild(line);
-    var shape = el('button', 'iconbtn', S.layout === 'square' ? '⬛' : '〰️');
-    shape.title = 'Change how the chain is laid out';
-    shape.addEventListener('click', function () {
-      S.layout = S.layout === 'snake' ? 'square' : 'snake';
-      render();
-    });
-    bar.appendChild(shape);
 
     var right = el('div', 'right');
     right.appendChild(el('div', null, 'Round ' + S.match.roundNumber));
@@ -427,131 +450,6 @@
     return 0.58;
   }
 
-  /** Fold the chain into rows that fit, each running back the other way. */
-  var MAX_RUN = 7;
-
-  /**
-   * Lay the chain out as one continuous line of dominoes: every tile is
-   * positioned from where the previous one ended, so neighbours touch. It
-   * starts at the tile that opened the round and grows both ways from it,
-   * turning a corner once a straight run reaches MAX_RUN.
-   */
-  function layoutChain(board, openerId, mode, scale) {
-    var longS = TILE_LONG * scale, shortS = TILE_SHORT * scale;
-    var spots = [];
-    if (!board.length) return { spots: spots, width: 0, height: 0 };
-
-    var openerIndex = 0;
-    if (openerId) {
-      for (var k = 0; k < board.length; k++) if (board[k].id === openerId) { openerIndex = k; break; }
-    }
-    function runLimit(dir) {
-      return mode === 'square' ? MAX_RUN : (dir === 0 || dir === 2 ? MAX_RUN : 1);
-    }
-    // Both arms share the opener's row, so each gets half of it.
-    var halfRun = Math.max(1, Math.floor((MAX_RUN - 1) / 2));
-
-    /**
-     * `backward` decides which half of the tile faces the one already down.
-     * Walking forward a tile meets its neighbour by its LEFT half; walking
-     * back from the opener it meets by its RIGHT half. Get this wrong and
-     * the board draws with mismatched pips touching.
-     */
-    // Unit step for each direction: right, down, left, up.
-    var STEP = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-
-    function acrossOf(tile) { return tile.left === tile.right ? longS : shortS; }
-
-    /**
-     * Move the cursor round a corner.
-     *
-     * Left alone, the turning tile would be centred on the previous tile's far
-     * edge and so lap back over it. Stepping back along the old direction by
-     * half the new tile's width, and on along the new direction by half the
-     * old tile's width, sets the two tiles corner to corner: they still
-     * touch, but nothing is laid on top of anything.
-     */
-    // Which way the chain turns next. Snake mode serpentines: every
-    // horizontal run steps one tile across and then doubles back the other
-    // way, so the chain never climbs into a row it has already filled.
-    // Cycling the four directions instead would walk it straight back over
-    // its own tiles. Square mode does keep turning the same way, which is
-    // what traces the ring.
-    function nextDir(d, lastH, vert) {
-      if (mode === 'square') return (d + 1) % 4;
-      return d === vert ? (lastH === 0 ? 2 : 0) : vert;
-    }
-
-    function turnCursor(at, from, to, oldAcross, newAcross) {
-      var o = STEP[from], n = STEP[to];
-      return {
-        x: at.x - o[0] * (newAcross / 2) + n[0] * (oldAcross / 2),
-        y: at.y - o[1] * (newAcross / 2) + n[1] * (oldAcross / 2)
-      };
-    }
-
-    function put(tile, index, dir, cx, cy, backward) {
-      var isDouble = tile.left === tile.right;
-      var along = isDouble ? shortS : longS, across = isDouble ? longS : shortS;
-      var vertical = dir === 1 || dir === 3;
-      var x = dir === 2 ? cx - along : (dir === 0 ? cx : cx - across / 2);
-      var y = dir === 3 ? cy - along : (dir === 1 ? cy : cy - across / 2);
-      var nearIsSecondHalf = dir === 2 || dir === 3;
-      spots.push({ index: index, tile: tile, x: x, y: y,
-        w: vertical ? across : along, h: vertical ? along : across,
-        vertical: vertical,
-        flipped: backward ? !nearIsSecondHalf : nearIsSecondHalf });
-      return {
-        x: cx + (dir === 0 ? along : (dir === 2 ? -along : 0)),
-        y: cy + (dir === 1 ? along : (dir === 3 ? -along : 0))
-      };
-    }
-
-    // A double lies across the chain rather than along it, so the chain can
-    // neither turn immediately after one nor turn on one: either way the
-    // corner folds a crosswise tile over its neighbour, blanketing the whole
-    // of it instead of meeting its end. The run carries straight on and
-    // turns at the next ordinary tile instead.
-    function isDouble(t) { return !!t && t.left === t.right; }
-
-    var cursor = put(board[openerIndex], openerIndex, 0, 0, 0);
-    var lastAcross = acrossOf(board[openerIndex]);
-    var dir = 0, run = 1, limit = halfRun + 1, lastH = 0;
-    for (var i = openerIndex + 1; i < board.length; i++) {
-      if (run >= limit && !isDouble(board[i - 1]) && !isDouble(board[i])) {
-        var next = nextDir(dir, lastH, 1);
-        if (next === 0 || next === 2) lastH = next;
-        cursor = turnCursor(cursor, dir, next, lastAcross, acrossOf(board[i]));
-        dir = next; run = 0; limit = runLimit(dir);
-      }
-      cursor = put(board[i], i, dir, cursor.x, cursor.y);
-      lastAcross = acrossOf(board[i]);
-      run++;
-    }
-    var back = 2, backRun = 1, backLimit = MAX_RUN - halfRun, bc = { x: 0, y: 0 };
-    var backAcross = acrossOf(board[openerIndex]), lastBackH = 2;
-    for (var j = openerIndex - 1; j >= 0; j--) {
-      if (backRun >= backLimit && !isDouble(board[j + 1]) && !isDouble(board[j])) {
-        var nextBack = nextDir(back, lastBackH, 3);
-        if (nextBack === 0 || nextBack === 2) lastBackH = nextBack;
-        bc = turnCursor(bc, back, nextBack, backAcross, acrossOf(board[j]));
-        back = nextBack; backRun = 0; backLimit = runLimit(back);
-      }
-      bc = put(board[j], j, back, bc.x, bc.y, true);
-      backAcross = acrossOf(board[j]);
-      backRun++;
-    }
-
-    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    spots.forEach(function (sp) {
-      minX = Math.min(minX, sp.x); minY = Math.min(minY, sp.y);
-      maxX = Math.max(maxX, sp.x + sp.w); maxY = Math.max(maxY, sp.y + sp.h);
-    });
-    spots.forEach(function (sp) { sp.x -= minX; sp.y -= minY; });
-    // Draw along the chain, not in the order the two arms were walked.
-    spots.sort(function (a, b) { return a.index - b.index; });
-    return { spots: spots, width: maxX - minX, height: maxY - minY };
-  }
 
   function renderTable() {
     var box = el('div', 'table');
@@ -594,55 +492,73 @@
     var grewLeft = ids.length > lastBoard.length && !grewRight;
     var freshId = grewRight ? ids[ids.length - 1] : (grewLeft ? ids[0] : null);
 
+    // The shape of the chain is the players' doing: every tile carries the
+    // direction it was laid in, so all this does is scale grid units to
+    // pixels. The same walker the server and the online client use.
+    var openerAt = D.openerIndexOf(board, round().openerTile);
+    var tiles = D.laidTiles(board);
+    var aiming = (S.dragTile || S.selected);
+    var slots = aiming && isPlaying ? D.slotsFor(tiles, openerAt, aiming) : [];
+    var plan = D.layout(tiles, openerAt);
+
+    // A spot can sit outside the tiles already down, so the frame covers
+    // both. It is worked out once per render and does not shift while a
+    // finger is already on its way somewhere.
+    var minX = 0, minY = 0, maxX = plan.width, maxY = plan.height;
+    slots.forEach(function (sp) {
+      minX = Math.min(minX, sp.x); minY = Math.min(minY, sp.y);
+      maxX = Math.max(maxX, sp.x + sp.w); maxY = Math.max(maxY, sp.y + sp.h);
+    });
+    var unitsW = Math.max(maxX - minX, 1), unitsH = Math.max(maxY - minY, 1);
+
     var roomW = Math.max(160, Math.min(window.innerWidth, 920) - 28);
     var roomH = Math.max(150, Math.min(430, window.innerHeight - 380));
-    var scale = chainScale(board.length);
-    var opener = round().openerTile;
-    var plan = layoutChain(board, opener, S.layout, scale);
-    for (var g = 0; g < 8 && (plan.width > roomW || plan.height > roomH); g++) {
-      scale *= Math.min(roomW / plan.width, roomH / plan.height, 0.92);
-      plan = layoutChain(board, opener, S.layout, scale);
-    }
+    // A tile is SHORT (2) units across, so a unit is half its short side.
+    var base = TILE_SHORT / 2;
+    var scale = Math.min(chainScale(board.length),
+      roomW / (unitsW * base), roomH / (unitsH * base));
+    var unit = base * scale;
     chain.style.setProperty('--tile-scale', String(scale));
 
     var pitch = el('div', 'pitch');
-    pitch.style.width = Math.max(plan.width, 1) + 'px';
-    pitch.style.height = Math.max(plan.height, 1) + 'px';
-    plan.spots.forEach(function (sp) {
-      var node = boardTile(sp.tile, sp.tile.id === freshId, sp.flipped, sp.vertical);
-      node.style.left = sp.x + 'px';
-      node.style.top = sp.y + 'px';
-      node.style.width = sp.w + 'px';
-      node.style.height = sp.h + 'px';
-      if (sp.tile.id === opener) node.className += ' opener';
-      if (S.messy) applyMess(node, sp.tile.id);
+    pitch.style.width = (unitsW * unit) + 'px';
+    pitch.style.height = (unitsH * unit) + 'px';
+    plan.placements.forEach(function (sp) {
+      var tile = board[sp.index];
+      var node = boardTile(tile, tile.id === freshId, sp.flipped, sp.vertical);
+      node.style.left = ((sp.x - minX) * unit) + 'px';
+      node.style.top = ((sp.y - minY) * unit) + 'px';
+      node.style.width = (sp.w * unit) + 'px';
+      node.style.height = (sp.h * unit) + 'px';
+      if (tile.id === round().openerTile) node.className += ' opener';
+      if (S.messy) applyMess(node, tile.id);
       pitch.appendChild(node);
     });
-    chain.appendChild(pitch);
 
+    // Everywhere the held tile could go: straight on, or round a corner
+    // above or below an end. Drag it to the one you want — the nearest
+    // wins, so a thumb need not be precise — or tap one.
+    slots.forEach(function (sp) {
+      var lit = sameSlot(S.dragOver, { end: sp.end, dir: sp.dir });
+      var tappable = !S.dragTile;
+      var node = el(tappable ? 'button' : 'div',
+        'slot' + (lit ? ' over' : '') + (tappable ? ' tappable' : ''));
+      node.setAttribute('data-end', sp.end);
+      node.setAttribute('data-dir', String(sp.dir));
+      node.style.left = ((sp.x - minX) * unit) + 'px';
+      node.style.top = ((sp.y - minY) * unit) + 'px';
+      node.style.width = (sp.w * unit) + 'px';
+      node.style.height = (sp.h * unit) + 'px';
+      if (tappable) {
+        node.setAttribute('aria-label', 'Lay it here, on the ' + sp.end + ' end');
+        node.addEventListener('click', function () { play(aiming, sp.end, sp.dir); });
+      }
+      pitch.appendChild(node);
+    });
+
+    chain.appendChild(pitch);
     box.appendChild(chain);
 
-    // Once a tile is in hand — dragged or tapped — the table becomes two
-    // targets, each showing the pip you would play against. That is the only
-    // place the open ends appear; there is no separate readout.
-    var aiming = S.dragTile || S.selected;
-    if (aiming && isPlaying) {
-      var e2 = D.openEnds(board);
-      var tappable = !S.dragTile;
-      ['left', 'right'].forEach(function (side) {
-        var zone = el(tappable ? 'button' : 'div',
-          'dropzone ' + side + (S.dragOver === side ? ' over' : '') + (tappable ? ' tappable' : ''));
-        zone.setAttribute('data-end', side);
-        zone.appendChild(el('span', 'zonelabel', side === 'left' ? 'LEFT' : 'RIGHT'));
-        var pip = side === 'left' ? e2.left : e2.right;
-        zone.appendChild(el('span', 'zonepip', String(pip)));
-        if (tappable) {
-          zone.setAttribute('aria-label', 'Play on the ' + side + ' end, against a ' + pip);
-          zone.addEventListener('click', function () { play(aiming, side); });
-        }
-        box.appendChild(zone);
-      });
-    }
     lastBoard = ids;
     return box;
   }
@@ -693,8 +609,8 @@
     if (playing()) {
       bar.appendChild(el('span', 'hint',
         round().board.length === 0 ? 'Pick a tile, then lay it down.'
-          : S.selected ? 'Now tap the end you want.'
-          : 'Drag a tile to an end — or tap it, then tap an end.'));
+          : S.selected ? 'Now tap one of the spots.'
+          : 'Drag a tile where you want it — or tap it, then tap a spot.'));
       if (S.selected) {
         var c = el('button', 'ghost small', 'Cancel');
         c.addEventListener('click', function () { S.selected = null; render(); });

@@ -27,6 +27,8 @@ import {
 import { Room, RoomRegistry, sanitizeChat, sanitizeName, type Player } from './rooms.js';
 import { Supabase, type AuthedUser } from './supabase.js';
 
+import { parseMove, parseSeat } from './wire.js';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIR = resolve(HERE, '../../client/dist');
 const PORT = Number(process.env.PORT ?? 8080);
@@ -164,24 +166,6 @@ const http = createServer((req, res) => {
 // ---------------------------------------------------------------------------
 // Message handling
 // ---------------------------------------------------------------------------
-
-function parseSeat(value: unknown): Seat {
-  const n = Number(value);
-  if (!SEATS.includes(n as Seat)) throw new RuleError('no such seat');
-  return n as Seat;
-}
-
-function parseMove(value: unknown): Move {
-  if (typeof value !== 'object' || value === null) throw new RuleError('malformed move');
-  const raw = value as { kind?: unknown; tile?: unknown; end?: unknown };
-  if (raw.kind === 'pass') return { kind: 'pass' };
-  if (raw.kind === 'play') {
-    if (typeof raw.tile !== 'string') throw new RuleError('malformed move');
-    if (raw.end !== 'left' && raw.end !== 'right') throw new RuleError('malformed move');
-    return { kind: 'play', tile: raw.tile, end: raw.end };
-  }
-  throw new RuleError('malformed move');
-}
 
 function attach(session: Session, socket: WebSocket, room: Room, player: Player): void {
   // One socket per player: an older connection for the same token is dropped.

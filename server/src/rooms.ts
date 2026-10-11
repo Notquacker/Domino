@@ -486,6 +486,7 @@ export class Room {
       seat,
       hand: round.hands[seat] ?? [],
       board: round.board,
+      openerTile: round.openerTile,
       ends: openEnds(round.board),
       tilesLeft: SEATS.map((s) => (round.hands[s] ?? []).length),
       voids: this.voids.map((v) => [...v]),

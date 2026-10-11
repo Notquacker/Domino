@@ -156,7 +156,10 @@ details.rules[open] summary::before { content: "▾ "; }
 .handzone { background: #00000052; border-top: 1px solid #ffffff1c; padding: 10px 0 12px; }
 .hand { display: flex; gap: 6px; padding: 0 16px 4px; overflow-x: auto; align-items: flex-end; scrollbar-width: none; }
 .hand::-webkit-scrollbar { display: none; }
-.handbar { display: flex; gap: 8px; justify-content: center; align-items: center; padding: 8px 16px 0; flex-wrap: wrap; }
+/* Room for two lines of hint whatever the hint says: without it the bar grew
+   when a tile left the hand, pushing the table up mid-drag. */
+.handbar { display: flex; gap: 8px; justify-content: center; align-items: center; padding: 8px 16px 0; flex-wrap: wrap; min-height: 52px; }
+.handbar .hint { flex: 1 1 100%; }
 .handbar .hint { color: var(--muted); font-size: 13px; }
 
 /* ---------- tiles ---------- */
@@ -243,32 +246,36 @@ details.rules[open] summary::before { content: "▾ "; }
 .endlabel { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
 .table { position: relative; }
 .hand .tile.inhand { touch-action: none; }
+/* A spot the held tile could go: straight on, or round a corner above or
+   below an end. They appear only while a tile is held. */
+.slot {
+  position: absolute; box-sizing: border-box;
+  border: 2px dashed #ffffff3d; border-radius: 7px;
+  background: #ffffff0a; pointer-events: none;
+  transition: background .12s ease, border-color .12s ease;
+}
+.slot.over {
+  border-color: var(--gold); border-style: solid; background: #e3b45b33;
+  box-shadow: 0 0 0 1px #e3b45b55 inset;
+}
+.slot.tappable { pointer-events: auto; cursor: pointer; padding: 0; font: inherit; }
+.slot.tappable:hover, .slot.tappable:focus-visible {
+  border-color: var(--gold); background: #e3b45b26;
+}
+/* The opening lead has no ends to choose between, so the table is one target. */
 .dropzone {
-  position: absolute; top: 0; bottom: 0; width: 50%;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 4px; pointer-events: none;
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none; border-radius: 12px;
   border: 2px dashed #ffffff33; background: #ffffff08;
   transition: background .12s ease, border-color .12s ease;
 }
-.dropzone.lead { left: 0; width: 100%; border-radius: 12px; }
-.dropzone.left { left: 0; border-right: none; border-radius: 0 12px 12px 0; }
-.dropzone.right { right: 0; border-left: none; border-radius: 12px 0 0 12px; }
 .dropzone.over { border-color: var(--gold); background: #e3b45b30; }
 .zonelabel { font-size: 12px; letter-spacing: .14em; font-weight: 700; color: var(--muted); }
 .dropzone.over .zonelabel { color: var(--gold); }
-.zonepip { font-size: 30px; font-weight: 800; color: var(--text); opacity: .55; font-variant-numeric: tabular-nums; }
-.dropzone.over .zonepip { color: var(--gold); opacity: 1; }
 .dropzone.tappable { pointer-events: auto; cursor: pointer; font: inherit; padding: 0; box-shadow: none; }
-.dropzone.tappable:hover, .dropzone.tappable:focus-visible { border-color: var(--gold); background: #e3b45b26; }
-.dropzone.tappable:hover .zonepip, .dropzone.tappable:focus-visible .zonepip { color: var(--gold); opacity: 1; }
-.dropzone.tappable {
-  pointer-events: auto; cursor: pointer; font: inherit; padding: 0; box-shadow: none;
-}
 .dropzone.tappable:hover, .dropzone.tappable:focus-visible {
   border-color: var(--gold); background: #e3b45b26;
-}
-.dropzone.tappable:hover .zonepip, .dropzone.tappable:focus-visible .zonepip {
-  color: var(--gold); opacity: 1;
 }
 .tile.ghost {
   position: fixed; z-index: 50; pointer-events: none;
