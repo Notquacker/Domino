@@ -395,6 +395,10 @@ a single rule: a tile lies across its run, a double along it, and turning the
 chain swaps both. Tiles shrink as the chain grows, so the whole board stays on
 screen without scrolling.
 
+The board keeps room around itself for the spots a tile could go, whether or
+not one is in hand, so picking a tile up never moves or resizes the table
+under your thumb.
+
 The same walker — `shared/src/geometry.ts` — runs on the server and in both
 clients, so what the table decides and what you see cannot disagree.
 Computer players use it too: they carry straight on while the board is a

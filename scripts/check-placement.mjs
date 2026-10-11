@@ -86,10 +86,17 @@ async function offeredSpots() {
       return {
         end: n.getAttribute('data-end'),
         dir: Number(n.getAttribute('data-dir')),
+        // Viewport coordinates, for aiming the pointer at it...
         x: r.left,
         y: r.top,
         width: r.width,
         height: r.height,
+        // ...and layout coordinates, in the same frame as the tiles, for
+        // checking afterwards that the tile landed on the spot it showed.
+        ol: n.offsetLeft,
+        ot: n.offsetTop,
+        ow: n.offsetWidth,
+        oh: n.offsetHeight,
       };
     }),
   );
@@ -108,6 +115,42 @@ async function offeredSpots() {
   await page.mouse.up();
 }
 await page.waitForSelector('.pitch .tile', { timeout: 5000 });
+
+/**
+ * Picking a tile up must not move the board.
+ *
+ * The spots a tile can go sit outside the tiles already down, so the frame
+ * has to make room for them — and when that room was only measured while a
+ * tile was in hand, the whole board shrank the moment one was picked up.
+ */
+async function boardHoldsStillWhenATileIsPickedUp() {
+  // The pitch's own rect for where the board sits, and a tile's layout box
+  // for how big the tiles are. Not a tile's rect: one just laid is still
+  // running its drop animation, and a rect includes the transform.
+  const read = () =>
+    page.evaluate(() => {
+      const p = document.querySelector('.pitch');
+      const t = document.querySelector('.pitch .tile');
+      if (p === null || t === null) return null;
+      const r = p.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: t.offsetWidth };
+    });
+  const idle = await read();
+  if (idle === null) return;
+  await page.locator('.hand .tile').first().click({ timeout: 2000 }).catch(() => {});
+  const held = await read();
+  if (held === null) return;
+  const moved = Math.max(Math.abs(held.x - idle.x), Math.abs(held.y - idle.y));
+  const resized = Math.abs(held.w - idle.w);
+  if (moved > 1 || resized > 1) {
+    problems.push(
+      `picking a tile up moved the board ${moved.toFixed(0)}px and resized the tiles by ` +
+        `${resized.toFixed(0)}px — whatever you were aiming at has shifted`,
+    );
+  } else {
+    console.log('picking a tile up leaves the board exactly where it was');
+  }
+}
 
 const seen = new Map();
 /** Keep going until both a straight run and a corner have been laid. */
@@ -163,6 +206,39 @@ async function tryTile(tile) {
       return true;
     }
 
+    // Did it land on the spot it was showing? Measured against a tile that was
+    // already down, so re-framing between the two readings cancels out. The new
+    // tile against its neighbour would not catch this: a rule that shifts every
+    // tile shifts them both. The board does legitimately change size as it
+    // grows, so this compares in multiples of a tile rather than in pixels.
+    const refBefore = before.find((t) => t.id === neighbourId);
+    const refAfter = after.find((t) => t.id === neighbourId);
+    if (refBefore !== undefined && refAfter !== undefined) {
+      const wasWide = refBefore.right - refBefore.left;
+      const nowWide = refAfter.right - refAfter.left;
+      const k = wasWide > 0 ? nowWide / wasWide : 1;
+      const tile = Math.max(1, Math.min(nowWide, refAfter.bottom - refAfter.top));
+      const slipX = Math.abs(fresh.left - refAfter.left - (spot.ol - refBefore.left) * k);
+      const slipY = Math.abs(fresh.top - refAfter.top - (spot.ot - refBefore.top) * k);
+      const slipW = Math.abs(fresh.right - fresh.left - spot.ow * k);
+      const slipH = Math.abs(fresh.bottom - fresh.top - spot.oh * k);
+      // A tenth of a tile: tighter than anything a player would call lined up,
+      // looser than rounding.
+      const allowed = tile / 10;
+      if (slipX > allowed || slipY > allowed) {
+        problems.push(
+          `${fresh.id} came to rest ${slipX.toFixed(0)},${slipY.toFixed(0)}px from the ` +
+            `${DIRS[spot.dir]} spot that was showing — the guide and the tile disagree`,
+        );
+      }
+      if (slipW > allowed || slipH > allowed) {
+        problems.push(
+          `the ${DIRS[spot.dir]} spot was the wrong size for ${fresh.id} by ` +
+            `${slipW.toFixed(0)}x${slipH.toFixed(0)}px`,
+        );
+      }
+    }
+
     // dir 0 right, 1 down, 2 left, 3 up — from the tile it was laid against.
     const dx = fresh.cx - neighbour.cx;
     const dy = fresh.cy - neighbour.cy;
@@ -189,7 +265,12 @@ async function tryTile(tile) {
   return false;
 }
 
+let steadied = false;
 for (let turn = 0; turn < 40 && needMore(); turn++) {
+  if (!steadied && (await page.locator('.pitch .tile').count()) >= 2) {
+    steadied = true;
+    await boardHoldsStillWhenATileIsPickedUp();
+  }
   const hand = page.locator('.hand .tile');
   const tiles = await hand.count();
   if (tiles === 0) break;

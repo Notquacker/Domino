@@ -618,18 +618,24 @@ body.shaking { animation: shake 0.62s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
 .signedin .tag, .adminrow .tag { font-size: 9px; font-weight: 800; letter-spacing: .08em;
   padding: 2px 6px; border-radius: 999px; background: var(--gold); color: #10231c; }
 
-.board { display: grid; gap: 4px; margin-top: 6px; }
-.boardrow {
+/*
+ * The leaderboard's rows. It used to be called `.board`, which every tile on
+ * the table also answers to — so this nudged all of them six pixels down and
+ * widened their pips, and the guides showing where a tile would go looked
+ * wrong when it was the tiles that had moved.
+ */
+.leaders { display: grid; gap: 4px; margin-top: 6px; }
+.leaderrow {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: 9px;
   background: #0000002e; border: 1px solid #ffffff10;
 }
-.boardrow.me { border-color: var(--gold); background: #e8b65c14; }
-.boardrow .rank { width: 22px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.boardrow .who { flex: 1 1 auto; min-width: 0; overflow: hidden;
+.leaderrow.me { border-color: var(--gold); background: #e8b65c14; }
+.leaderrow .rank { width: 22px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.leaderrow .who { flex: 1 1 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.boardrow .wins { font-weight: 800; color: var(--gold); font-variant-numeric: tabular-nums; }
-.boardrow .played { color: var(--muted); font-size: 12px; }
+.leaderrow .wins { font-weight: 800; color: var(--gold); font-variant-numeric: tabular-nums; }
+.leaderrow .played { color: var(--muted); font-size: 12px; }
 
 .adminrow { padding: 10px 0; border-top: 1px solid #ffffff14; }
 .adminrow .name { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }

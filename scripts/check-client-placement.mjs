@@ -59,9 +59,16 @@ async function tableBoxes() {
   );
 }
 
+/**
+ * Drag from one element to a point. Returns false if there was nothing to
+ * take hold of: the hand is rebuilt whenever the table changes, so a tile
+ * picked out a moment ago may be gone. That is the game moving on, not a
+ * fault.
+ */
 async function drag(from, to) {
-  const a = await from.boundingBox();
-  const b = 'x' in to ? to : await to.boundingBox();
+  const a = await from.boundingBox({ timeout: 2000 }).catch(() => null);
+  const b = 'x' in to ? to : await to.boundingBox({ timeout: 2000 }).catch(() => null);
+  if (a === null || b === null) return false;
   const [x0, y0] = [a.x + a.width / 2, a.y + a.height / 2];
   const [x1, y1] = [b.x + b.width / 2, b.y + b.height / 2];
   await page.mouse.move(x0, y0);
@@ -70,6 +77,7 @@ async function drag(from, to) {
     await page.mouse.move(x0 + ((x1 - x0) * i) / 10, y0 + ((y1 - y0) * i) / 10);
   }
   await page.mouse.up();
+  return true;
 }
 
 /**
@@ -87,10 +95,17 @@ async function offeredSpots() {
       return {
         end: n.getAttribute('data-end'),
         dir: Number(n.getAttribute('data-dir')),
+        // Viewport coordinates, for aiming the pointer at it...
         x: r.left,
         y: r.top,
         width: r.width,
         height: r.height,
+        // ...and layout coordinates, in the same frame as the tiles, for
+        // checking afterwards that the tile landed on the spot it showed.
+        ol: n.offsetLeft,
+        ot: n.offsetTop,
+        ow: n.offsetWidth,
+        oh: n.offsetHeight,
       };
     }),
   );
@@ -111,14 +126,66 @@ async function waitForTurn(ms = 25_000) {
   }
 }
 
+/**
+ * Picking a tile up must not move the board.
+ *
+ * The spots a tile can go sit outside the tiles already down, so the frame
+ * has to make room for them — and when that room was only measured while a
+ * tile was in hand, the whole board shrank the moment one was picked up. A
+ * drag that began on the board then moved the board out from under the
+ * finger that started it.
+ */
+async function boardHoldsStillWhenATileIsPickedUp() {
+  // The pitch's own rect for where the board sits, and a tile's layout box
+  // for how big the tiles are. Not a tile's rect: one just laid is still
+  // running its drop animation, and a rect includes the transform.
+  const read = () =>
+    page.evaluate(() => {
+      const p = document.querySelector('.pitch');
+      const t = document.querySelector('.pitch .tile');
+      if (p === null || t === null) return null;
+      const r = p.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: t.offsetWidth };
+    });
+  const idle = await read();
+  if (idle === null) return;
+  const tile = page.locator('.hand .tile').first();
+  const a = await tile.boundingBox();
+  if (a === null) return;
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(a.x + a.width / 2, a.y - 30);
+  await page.mouse.move(a.x + a.width / 2, a.y - 60);
+  const held = await read();
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  if (held === null) return;
+  const moved = Math.max(Math.abs(held.x - idle.x), Math.abs(held.y - idle.y));
+  const resized = Math.abs(held.w - idle.w);
+  if (moved > 1 || resized > 1) {
+    problems.push(
+      `picking a tile up moved the board ${moved.toFixed(0)}px and resized the tiles by ` +
+        `${resized.toFixed(0)}px — whatever you were aiming at has shifted`,
+    );
+  } else {
+    console.log('picking a tile up leaves the board exactly where it was');
+  }
+}
+
 const seen = new Map();
 /** Keep going until both a straight run and a corner have been laid. */
 const needMore = () => seen.size < 2 || (!seen.has(1) && !seen.has(3));
 let placed = 0;
 let refused = 0;
 
+let steadied = false;
 for (let turn = 0; turn < 40 && needMore(); turn++) {
   if (!(await waitForTurn())) break;
+  if (!steadied && (await page.locator('.pitch .tile').count()) >= 2) {
+    steadied = true;
+    await boardHoldsStillWhenATileIsPickedUp();
+  }
   const hand = page.locator('.hand .tile');
   const tiles = await hand.count();
   if (tiles === 0) break;
@@ -126,14 +193,14 @@ for (let turn = 0; turn < 40 && needMore(); turn++) {
   let laid = false;
   for (let i = 0; i < tiles && !laid; i++) {
     const tile = hand.nth(i);
-    await tile.click();
+    if (!(await tile.click({ timeout: 2000 }).then(() => true).catch(() => false))) continue;
     const spots = await offeredSpots();
     if (spots.length === 0) {
       // The opening lead: one target over the whole table.
       const lead = page.locator('.dropzone');
       if ((await lead.count()) === 0) continue;
       const before = await page.locator('.pitch .tile').count();
-      await drag(tile, lead.first());
+      if (!(await drag(tile, lead.first()))) continue;
       await page.waitForTimeout(600);
       if ((await page.locator('.pitch .tile').count()) > before) {
         laid = true;
@@ -160,12 +227,13 @@ for (let turn = 0; turn < 40 && needMore(); turn++) {
       const neighbourId =
         spot.end === 'right' ? before[before.length - 1].id : before[0].id;
 
-      await drag(tile, spot);
+      if (!(await drag(tile, spot))) break;
       await page.waitForTimeout(700); // the server has to answer
       const after = await tableBoxes();
       if (!after.some((t) => t.id === held)) {
         refused++;
-        await tile.click();
+        // Show the spots again; if the tile has gone there is nothing left.
+        if (!(await tile.click({ timeout: 2000 }).then(() => true).catch(() => false))) break;
         continue;
       }
 
@@ -177,6 +245,39 @@ for (let turn = 0; turn < 40 && needMore(); turn++) {
         problems.push('could not find the tile just played');
         break;
       }
+      // Did it land on the spot it was showing? Measured against a tile that was
+      // already down, so re-framing between the two readings cancels out. The new
+      // tile against its neighbour would not catch this: a rule that shifts every
+      // tile shifts them both. The board does legitimately change size as it
+      // grows, so this compares in multiples of a tile rather than in pixels.
+      const refBefore = before.find((t) => t.id === neighbourId);
+      const refAfter = after.find((t) => t.id === neighbourId);
+      if (refBefore !== undefined && refAfter !== undefined) {
+        const wasWide = refBefore.right - refBefore.left;
+        const nowWide = refAfter.right - refAfter.left;
+        const k = wasWide > 0 ? nowWide / wasWide : 1;
+        const tile = Math.max(1, Math.min(nowWide, refAfter.bottom - refAfter.top));
+        const slipX = Math.abs(fresh.left - refAfter.left - (spot.ol - refBefore.left) * k);
+        const slipY = Math.abs(fresh.top - refAfter.top - (spot.ot - refBefore.top) * k);
+        const slipW = Math.abs(fresh.right - fresh.left - spot.ow * k);
+        const slipH = Math.abs(fresh.bottom - fresh.top - spot.oh * k);
+        // A tenth of a tile: tighter than anything a player would call lined up,
+        // looser than rounding.
+        const allowed = tile / 10;
+        if (slipX > allowed || slipY > allowed) {
+          problems.push(
+            `${fresh.id} came to rest ${slipX.toFixed(0)},${slipY.toFixed(0)}px from the ` +
+              `${DIRS[spot.dir]} spot that was showing — the guide and the tile disagree`,
+          );
+        }
+        if (slipW > allowed || slipH > allowed) {
+          problems.push(
+            `the ${DIRS[spot.dir]} spot was the wrong size for ${fresh.id} by ` +
+              `${slipW.toFixed(0)}x${slipH.toFixed(0)}px`,
+          );
+        }
+      }
+
       const dx = fresh.cx - neighbour.cx;
       const dy = fresh.cy - neighbour.cy;
       const landed = [

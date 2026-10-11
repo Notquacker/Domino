@@ -706,9 +706,9 @@ function renderLeaderboard(): HTMLElement {
     card.appendChild(el('p', 'hint', 'No finished matches yet. Win one and it shows up here.'));
     return card;
   }
-  const table = el('div', 'board');
+  const table = el('div', 'leaders');
   for (const row of leaders) {
-    const line = el('div', `boardrow${myAccount?.username === row.username ? ' me' : ''}`);
+    const line = el('div', `leaderrow${myAccount?.username === row.username ? ' me' : ''}`);
     line.appendChild(el('span', 'rank', String(row.rank)));
     line.appendChild(el('span', 'who', row.username));
     line.appendChild(el('span', 'wins', `${row.wins}`));
@@ -1407,6 +1407,14 @@ function chainScale(count: number): number {
 }
 
 
+/**
+ * The stand-in used to work out how much room to keep around the board.
+ *
+ * Any ordinary tile will do: only its length and whether it is a double
+ * matter, never which tile it is or who holds it.
+ */
+const ROOM_FOR: TileId = '0-1';
+
 function renderTable(v: PlayerView): HTMLElement {
   const box = el('div', 'table');
   const chain = el('div', `chain${messy ? ' messy' : ''}`);
@@ -1469,14 +1477,21 @@ function renderTable(v: PlayerView): HTMLElement {
   const roomH = Math.max(150, Math.min(430, window.innerHeight - 380));
   const plan = layoutBoard(tiles, openerAt);
 
-  // Slots can sit outside the current bounds, so the frame covers both. It
-  // is worked out once per render and does not move while a drag is going
-  // on, which matters when a finger is already heading somewhere.
+  // A spot can sit outside the tiles already down, so the frame has to cover
+  // both or the spots would be drawn outside it and clipped.
+  //
+  // The room is kept whether or not a tile is in hand. Measuring it only
+  // while one is held made the whole board shrink the moment you picked a
+  // tile up — about a fifth — so a drag that began on the board moved the
+  // board out from under the finger that started it. An ordinary tile stands
+  // in for whatever is held: it is the longest thing that can go in a spot,
+  // and it says nothing about anybody's hand, since where a tile fits is
+  // decided by the shape on the table and whether the tile is a double.
   let minX = 0;
   let minY = 0;
   let maxX = plan.width;
   let maxY = plan.height;
-  for (const slot of slots) {
+  for (const slot of [...slotsFor(tiles, openerAt, ROOM_FOR), ...slots]) {
     minX = Math.min(minX, slot.x);
     minY = Math.min(minY, slot.y);
     maxX = Math.max(maxX, slot.x + slot.w);

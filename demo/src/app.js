@@ -451,6 +451,10 @@
   }
 
 
+  /* Any ordinary tile will do to measure the room a spot needs: only its
+     length and whether it is a double matter, never who holds it. */
+  var ROOM_FOR = '0-1';
+
   function renderTable() {
     var box = el('div', 'table');
     var chain = el('div', 'chain' + (S.messy ? ' messy' : ''));
@@ -501,11 +505,16 @@
     var slots = aiming && isPlaying ? D.slotsFor(tiles, openerAt, aiming) : [];
     var plan = D.layout(tiles, openerAt);
 
-    // A spot can sit outside the tiles already down, so the frame covers
-    // both. It is worked out once per render and does not shift while a
-    // finger is already on its way somewhere.
+    // A spot can sit outside the tiles already down, so the frame has to
+    // cover both or the spots would be drawn outside it and clipped.
+    //
+    // The room is kept whether or not a tile is in hand. Measuring it only
+    // while one is held made the whole board shrink the moment you picked a
+    // tile up, so a drag that began on the board moved the board out from
+    // under the finger that started it. ROOM_FOR stands in for whatever is
+    // held: it is the longest thing that can go in a spot.
     var minX = 0, minY = 0, maxX = plan.width, maxY = plan.height;
-    slots.forEach(function (sp) {
+    D.slotsFor(tiles, openerAt, ROOM_FOR).concat(slots).forEach(function (sp) {
       minX = Math.min(minX, sp.x); minY = Math.min(minY, sp.y);
       maxX = Math.max(maxX, sp.x + sp.w); maxY = Math.max(maxY, sp.y + sp.h);
     });
