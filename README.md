@@ -263,6 +263,7 @@ npm run build:demo && node scripts/check-placement.mjs    # the pass-and-play de
 node server/dist/index.js &                               # then, against a live server:
 node scripts/check-client-placement.mjs http://127.0.0.1:3000/
 node scripts/check-turn.mjs http://127.0.0.1:3000/        # can you tell whose turn it is?
+node scripts/check-zoom.mjs http://127.0.0.1:3000/        # does the board zoom and pan?
 node scripts/check-keyboard.mjs http://127.0.0.1:3000/    # can you type on a phone?
 ```
 
@@ -407,6 +408,16 @@ screen without scrolling.
 The board keeps room around itself for the spots a tile could go, whether or
 not one is in hand, so picking a tile up never moves or resizes the table
 under your thumb.
+
+**You can zoom in.** Fitting the whole chain on a phone leaves the pips too
+small to read by the end of a round, so pinch, double-tap the felt, or use
+the buttons in the corner — up to four times, with one finger to pan once the
+board is larger than the screen. It is a transform on the tiles rather than a
+larger layout: a pinch costs one style change instead of laying the board out
+again every frame, and because the spots a tile can go sit in the same box as
+the tiles, they scale with them and stay lined up. Zoom goes no lower than
+fitting, since below that there is only more felt, and a new round starts
+fitted again.
 
 The same walker — `shared/src/geometry.ts` — runs on the server and in both
 clients, so what the table decides and what you see cannot disagree.

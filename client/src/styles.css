@@ -239,24 +239,68 @@ input::placeholder { color: var(--muted); }
 .backs { display: flex; gap: 2px; margin-top: 5px; }
 .back { width: 7px; height: 13px; border-radius: 2px; background: #ffffff38; }
 
+/* Holds the board's scroller and the zoom controls, which must not scroll
+   with it. */
+.tablewrap { flex: 1; position: relative; display: flex; min-height: 0; }
+
 .table {
   flex: 1;
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
   padding: 10px 0;
-  /* The chain folds to fit, so nothing runs off the side. */
-  overflow-x: hidden;
-  overflow-y: auto;
+  /*
+   * Zoomed in, the board is bigger than this box and one finger pans it.
+   * `margin: auto` on the chain does the centring rather than
+   * justify-content, which would cut off the top and left of anything
+   * larger than the box instead of letting it scroll there.
+   */
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
   min-height: 150px;
 }
-.table::-webkit-scrollbar { width: 6px; }
+.table::-webkit-scrollbar { width: 6px; height: 6px; }
 .table::-webkit-scrollbar-thumb { background: #ffffff24; border-radius: 3px; }
+
+/* Carries the zoomed size, so the table has something to scroll. The tiles
+   inside are scaled by a transform: one style change per pinch frame
+   instead of laying the whole board out again. */
+.zoomframe { position: relative; flex: none; }
+.zoomframe .pitch { transform-origin: 0 0; }
+
+/* The zoom controls. Out of the way at the edge of the felt, but always
+   reachable with the thumb that is already holding the phone. */
+.zoombar {
+  /* Pinned to the corner of the felt, not to the board: the board moves. */
+  position: absolute; right: 10px; top: 10px; z-index: 4;
+  display: flex; flex-direction: column; align-items: stretch;
+  border-radius: 10px; overflow: hidden;
+  border: 1px solid #ffffff1f; background: #0b1b15cc;
+  backdrop-filter: blur(3px);
+}
+.zoombtn, .zoomlevel {
+  background: transparent; color: var(--text); border: 0;
+  padding: 0; font: inherit; cursor: pointer;
+}
+.zoombtn {
+  width: 34px; height: 30px; font-size: 17px; font-weight: 700; line-height: 1;
+}
+.zoomlevel {
+  height: 24px; font-size: 10px; font-weight: 700; color: var(--muted);
+  border-block: 1px solid #ffffff1a; font-variant-numeric: tabular-nums;
+}
+.zoombtn:hover:not(:disabled), .zoomlevel:hover { background: #ffffff14; }
+.zoombtn:disabled { opacity: 0.32; cursor: default; }
 
 /* The chain snakes: each row runs the opposite way to the one above it. */
 .chain {
   display: flex; flex-direction: column;
   align-items: center; gap: 4px;
+  /* auto margins centre it while it fits and let it overflow — and be
+     scrolled to — once zoom has made it larger than the table. A max-width
+     here would clamp it back to the screen and there would be nothing to
+     pan. */
   margin: auto; padding: 0 14px;
-  max-width: 100%;
+  flex: none;
 }
 .chainrow { display: flex; align-items: center; gap: 3px; }
 .chainrow.reverse { flex-direction: row-reverse; }

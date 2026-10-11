@@ -455,13 +455,189 @@
      length and whether it is a double matter, never who holds it. */
   var ROOM_FOR = '0-1';
 
+  /*
+   * Zooming. The board shrinks itself to fit as the chain grows, which by
+   * the end of a round leaves the pips too small to read. Zoom sits on top
+   * of that: 1 is whatever currently fits, and above it the board keeps its
+   * own size and the table scrolls. It is a transform on the tiles rather
+   * than a bigger layout, so a pinch costs one style change instead of
+   * laying the whole board out again — and the spots a tile can go are in
+   * the same box as the tiles, so they scale with them and stay lined up.
+   */
+  var MIN_ZOOM = 1, MAX_ZOOM = 4;
+  var zoom = 1;
+  var fitSize = { w: 0, h: 0 };
+
+  function zoomParts() {
+    var table = document.querySelector('.table');
+    var frame = document.getElementById('zoomframe');
+    var pitch = document.getElementById('pitch');
+    if (!table || !frame || !pitch) return null;
+    return { table: table, frame: frame, pitch: pitch };
+  }
+
+  function applyZoom() {
+    var parts = zoomParts();
+    if (!parts) return;
+    parts.frame.style.width = (fitSize.w * zoom) + 'px';
+    parts.frame.style.height = (fitSize.h * zoom) + 'px';
+    parts.pitch.style.transform = zoom === 1 ? '' : 'scale(' + zoom + ')';
+    var label = document.getElementById('zoomlevel');
+    if (label) label.textContent = Math.round(zoom * 100) + '%';
+    var inn = document.getElementById('zoomin');
+    var out = document.getElementById('zoomout');
+    if (inn) inn.disabled = zoom >= MAX_ZOOM - 0.001;
+    if (out) out.disabled = zoom <= MIN_ZOOM + 0.001;
+  }
+
+  /**
+   * Change the zoom, keeping `anchor` where it is. Where that point sits on
+   * the board has to be worked out BEFORE the zoom changes, with the zoom it
+   * was drawn at: measuring it afterwards gives an offset of exactly zero
+   * every time and the board never moves.
+   */
+  function setZoom(next, anchor) {
+    var clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+    if (Math.abs(clamped - zoom) < 0.0005) return;
+    var parts = zoomParts();
+    var before = null;
+    if (parts && anchor) {
+      var was = parts.frame.getBoundingClientRect();
+      before = { x: (anchor.x - was.left) / zoom, y: (anchor.y - was.top) / zoom };
+    }
+    zoom = clamped;
+    applyZoom();
+    if (parts && before) {
+      var now = parts.frame.getBoundingClientRect();
+      parts.table.scrollLeft += now.left + before.x * zoom - anchor.x;
+      parts.table.scrollTop += now.top + before.y * zoom - anchor.y;
+    }
+  }
+
+  /* The middle of the chain you can see — not of the screen. The board keeps
+     a margin of empty felt for the spots, and zooming about the screen's
+     middle magnifies that and leaves you looking at nothing. */
+  function centreOfBoard() {
+    var table = document.querySelector('.table');
+    if (!table) return null;
+    var view = table.getBoundingClientRect();
+    var tiles = document.querySelectorAll('.pitch .tile');
+    if (!tiles.length) return { x: view.left + view.width / 2, y: view.top + view.height / 2 };
+    var l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (var i = 0; i < tiles.length; i++) {
+      var box = tiles[i].getBoundingClientRect();
+      l = Math.min(l, box.left); t = Math.min(t, box.top);
+      r = Math.max(r, box.right); b = Math.max(b, box.bottom);
+    }
+    var x0 = Math.max(l, view.left), x1 = Math.min(r, view.right);
+    var y0 = Math.max(t, view.top), y1 = Math.min(b, view.bottom);
+    return x1 > x0 && y1 > y0
+      ? { x: (x0 + x1) / 2, y: (y0 + y1) / 2 }
+      : { x: (l + r) / 2, y: (t + b) / 2 };
+  }
+
+  /** The zoom controls, for anyone who would rather tap than pinch. */
+  function renderZoom() {
+    var bar = el('div', 'zoombar');
+    var out = el('button', 'zoombtn', '\u2212');
+    out.id = 'zoomout'; out.title = 'Zoom out';
+    out.setAttribute('aria-label', 'Zoom out');
+    out.addEventListener('click', function () { setZoom(zoom - 0.5, centreOfBoard()); });
+    var level = el('button', 'zoomlevel', Math.round(zoom * 100) + '%');
+    level.id = 'zoomlevel'; level.title = 'Fit the whole board';
+    level.setAttribute('aria-label', 'Fit the whole board on screen');
+    level.addEventListener('click', function () { setZoom(1); });
+    var inn = el('button', 'zoombtn', '+');
+    inn.id = 'zoomin'; inn.title = 'Zoom in';
+    inn.setAttribute('aria-label', 'Zoom in');
+    inn.addEventListener('click', function () { setZoom(zoom + 0.5, centreOfBoard()); });
+    out.disabled = zoom <= MIN_ZOOM + 0.001;
+    inn.disabled = zoom >= MAX_ZOOM - 0.001;
+    bar.appendChild(out); bar.appendChild(level); bar.appendChild(inn);
+    return bar;
+  }
+
+  /**
+   * Pinch, wheel and double-tap. One finger is left alone: the table scrolls
+   * natively, which pans the board. The pinch is read from touch events, not
+   * pointer events — with one finger free to pan, the browser treats a
+   * second as a two-finger scroll and cancels the pointers out from under
+   * the gesture, and a touchmove can say no to that.
+   */
+  function armZoomGestures(box) {
+    var pinchFrom = 0, zoomFrom = 1;
+    /* Lifting a pinch fires one pointerup per finger a few milliseconds
+       apart. Read as taps that is a double-tap, so every pinch used to end
+       by undoing itself. */
+    var lastPinch = 0;
+
+    function spread(touches) {
+      var a = touches[0], b = touches[1];
+      if (!a || !b) return null;
+      return {
+        gap: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+        mid: { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
+      };
+    }
+
+    box.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 2) return;
+      var now = spread(e.touches);
+      if (!now) return;
+      pinchFrom = now.gap; zoomFrom = zoom; lastPinch = Date.now();
+    }, { passive: false });
+
+    box.addEventListener('touchmove', function (e) {
+      if (e.touches.length !== 2 || pinchFrom <= 0) return;
+      var now = spread(e.touches);
+      if (!now || now.gap <= 0) return;
+      if (e.cancelable) e.preventDefault();
+      lastPinch = Date.now();
+      setZoom(zoomFrom * (now.gap / pinchFrom), now.mid);
+    }, { passive: false });
+
+    function endPinch(e) {
+      if (e.touches.length < 2) pinchFrom = 0;
+      if (e.touches.length > 0) lastPinch = Date.now();
+    }
+    box.addEventListener('touchend', endPinch);
+    box.addEventListener('touchcancel', endPinch);
+
+    box.addEventListener('wheel', function (e) {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      setZoom(zoom * (e.deltaY > 0 ? 0.92 : 1.08), { x: e.clientX, y: e.clientY });
+    }, { passive: false });
+
+    var lastTap = 0;
+    box.addEventListener('pointerup', function (e) {
+      if (e.target.closest('.slot, .tile, button')) return;
+      if (!e.isPrimary) return;
+      var now = Date.now();
+      if (now - lastPinch < 500) { lastTap = 0; return; }
+      if (now - lastTap < 320) {
+        setZoom(zoom > 1 ? 1 : 2, { x: e.clientX, y: e.clientY });
+        lastTap = 0;
+        return;
+      }
+      lastTap = now;
+    });
+  }
+
   function renderTable() {
+    /* The zoom controls live outside the scroller, or they would scroll away
+       with the board and end up sitting on a tile in the middle of it. */
+    var outer = el('div', 'tablewrap');
     var box = el('div', 'table');
+    outer.appendChild(box);
     var chain = el('div', 'chain' + (S.messy ? ' messy' : ''));
     var board = round().board;
     var isPlaying = playing();
 
     if (!board.length) {
+      // A new round starts fitted: a zoom chosen for a long chain makes no
+      // sense for an empty table, and it would hide the opening target.
+      zoom = 1;
       // The lead has no ends to choose between, so the whole table is one
       // target; otherwise a dragged tile has nowhere to land.
       var leading = S.dragTile || S.selected;
@@ -488,7 +664,7 @@
       }
 
       lastBoard = [];
-      return box;
+      return outer;
     }
 
     var ids = board.map(function (b) { return b.id; });
@@ -565,11 +741,24 @@
       pitch.appendChild(node);
     });
 
-    chain.appendChild(pitch);
+    /* The pitch keeps its fitted size and is scaled by a transform; the
+       frame around it carries the scaled size, which is what gives the table
+       something to scroll when you are zoomed in. */
+    pitch.id = 'pitch';
+    fitSize = { w: unitsW * unit, h: unitsH * unit };
+    var frame = el('div', 'zoomframe');
+    frame.id = 'zoomframe';
+    frame.style.width = (fitSize.w * zoom) + 'px';
+    frame.style.height = (fitSize.h * zoom) + 'px';
+    if (zoom !== 1) pitch.style.transform = 'scale(' + zoom + ')';
+    frame.appendChild(pitch);
+    chain.appendChild(frame);
     box.appendChild(chain);
+    outer.appendChild(renderZoom());
+    armZoomGestures(box);
 
     lastBoard = ids;
-    return box;
+    return outer;
   }
 
   /**

@@ -1459,12 +1459,102 @@ function chainScale(count: number): number {
  */
 const ROOM_FOR: TileId = '0-1';
 
+/*
+ * Zooming.
+ *
+ * The board shrinks itself to fit as the chain grows, which by the end of a
+ * round leaves the pips too small to read. Zoom sits on top of that: 1 is
+ * whatever currently fits, and above it the board keeps its own size and the
+ * table scrolls.
+ *
+ * It is a transform on the tiles rather than a bigger layout, so a pinch
+ * costs one style change instead of rebuilding the board every frame — and
+ * because the spots a tile can go are laid out in the same box as the tiles,
+ * they scale with them and keep lining up. There is nothing below 1: the
+ * board already fits there, and zooming out further only adds green.
+ */
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 4;
+let zoom = 1;
+/** The board's size at zoom 1, in pixels, as the last render worked it out. */
+let fitSize = { w: 0, h: 0 };
+
+function zoomParts(): { table: HTMLElement; frame: HTMLElement; pitch: HTMLElement } | null {
+  const table = document.querySelector('.table');
+  const frame = document.getElementById('zoomframe');
+  const pitch = document.getElementById('pitch');
+  if (table === null || frame === null || pitch === null) return null;
+  return { table: table as HTMLElement, frame, pitch };
+}
+
+/** Put the new zoom on screen. Sizes and labels only — no re-render. */
+function applyZoom(): void {
+  const parts = zoomParts();
+  if (parts === null) return;
+  parts.frame.style.width = `${fitSize.w * zoom}px`;
+  parts.frame.style.height = `${fitSize.h * zoom}px`;
+  parts.pitch.style.transform = zoom === 1 ? '' : `scale(${zoom})`;
+
+  const label = document.getElementById('zoomlevel');
+  if (label !== null) label.textContent = `${Math.round(zoom * 100)}%`;
+  for (const id of ['zoomin', 'zoomout'] as const) {
+    const button = document.getElementById(id) as HTMLButtonElement | null;
+    if (button !== null) {
+      button.disabled = id === 'zoomin' ? zoom >= MAX_ZOOM - 0.001 : zoom <= MIN_ZOOM + 0.001;
+    }
+  }
+}
+
+/**
+ * Change the zoom, keeping `anchor` where it is.
+ *
+ * `anchor` is the point that must stay under the finger — the midpoint of a
+ * pinch, the pointer for a wheel, or the middle of the chain for a button.
+ * Without it, zooming always drags the board's top-left corner towards you
+ * and whatever you were looking at slides off the screen.
+ *
+ * Where that point sits on the board has to be worked out BEFORE the zoom
+ * changes, with the zoom it was drawn at. Measuring it afterwards, against
+ * the new zoom, gives an offset of exactly zero every time: the sum quietly
+ * cancels itself out and the board never moves.
+ */
+function setZoom(next: number, anchor?: { x: number; y: number }): void {
+  const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+  if (Math.abs(clamped - zoom) < 0.0005) return;
+
+  const parts = zoomParts();
+  const before =
+    parts === null || anchor === undefined
+      ? null
+      : (() => {
+          const was = parts.frame.getBoundingClientRect();
+          return { x: (anchor.x - was.left) / zoom, y: (anchor.y - was.top) / zoom };
+        })();
+
+  zoom = clamped;
+  applyZoom();
+
+  if (parts !== null && before !== null && anchor !== undefined) {
+    const now = parts.frame.getBoundingClientRect();
+    parts.table.scrollLeft += now.left + before.x * zoom - anchor.x;
+    parts.table.scrollTop += now.top + before.y * zoom - anchor.y;
+  }
+}
+
 function renderTable(v: PlayerView): HTMLElement {
+  // The zoom controls live outside the scroller, or they would scroll away
+  // with the board the moment you zoomed in and end up sitting on a tile in
+  // the middle of the chain.
+  const outer = el('div', 'tablewrap');
   const box = el('div', 'table');
+  outer.appendChild(box);
   const chain = el('div', `chain${messy ? ' messy' : ''}`);
   const playing = v.youMayMove;
 
   if (v.board.length === 0) {
+    // A new round starts fitted: a zoom chosen for a long chain makes no
+    // sense for an empty table, and it would hide the opening target.
+    zoom = 1;
     // The lead has no ends to choose between, so the whole table is one
     // target. Without this a dragged tile has nowhere to land and the opener
     // is left wondering why nothing happens.
@@ -1500,7 +1590,7 @@ function renderTable(v: PlayerView): HTMLElement {
     }
 
     lastBoard = [];
-    return box;
+    return outer;
   }
 
   const ids = v.board.map((b) => b.id);
@@ -1590,10 +1680,192 @@ function renderTable(v: PlayerView): HTMLElement {
     pitch.appendChild(node);
   }
 
-  chain.appendChild(pitch);
+  // The pitch keeps its fitted size and is scaled by a transform; the frame
+  // around it carries the scaled size, which is what gives the table
+  // something to scroll when you are zoomed in.
+  pitch.id = 'pitch';
+  fitSize = { w: unitsW * unit, h: unitsH * unit };
+  const frame = el('div', 'zoomframe');
+  frame.id = 'zoomframe';
+  frame.style.width = `${fitSize.w * zoom}px`;
+  frame.style.height = `${fitSize.h * zoom}px`;
+  if (zoom !== 1) pitch.style.transform = `scale(${zoom})`;
+  frame.appendChild(pitch);
+  chain.appendChild(frame);
   box.appendChild(chain);
+  outer.appendChild(renderZoom());
+  armZoomGestures(box);
   lastBoard = ids;
-  return box;
+  return outer;
+}
+
+/** The zoom controls, for anyone who would rather tap than pinch. */
+function renderZoom(): HTMLElement {
+  const bar = el('div', 'zoombar');
+  const out = el('button', 'zoombtn', '−') as HTMLButtonElement;
+  out.id = 'zoomout';
+  out.title = 'Zoom out';
+  out.setAttribute('aria-label', 'Zoom out');
+  out.addEventListener('click', () => setZoom(zoom - 0.5, centreOfBoard()));
+
+  const level = el('button', 'zoomlevel', `${Math.round(zoom * 100)}%`) as HTMLButtonElement;
+  level.id = 'zoomlevel';
+  level.title = 'Fit the whole board';
+  level.setAttribute('aria-label', 'Fit the whole board on screen');
+  level.addEventListener('click', () => setZoom(1));
+
+  const inn = el('button', 'zoombtn', '+') as HTMLButtonElement;
+  inn.id = 'zoomin';
+  inn.title = 'Zoom in';
+  inn.setAttribute('aria-label', 'Zoom in');
+  inn.addEventListener('click', () => setZoom(zoom + 0.5, centreOfBoard()));
+
+  out.disabled = zoom <= MIN_ZOOM + 0.001;
+  inn.disabled = zoom >= MAX_ZOOM - 0.001;
+  bar.appendChild(out);
+  bar.appendChild(level);
+  bar.appendChild(inn);
+  return bar;
+}
+
+/**
+ * Pinch, wheel and double-tap.
+ *
+ * One finger is left alone: the table scrolls natively, which pans the board
+ * when it is bigger than the screen, and a tap still reaches the spot under
+ * it. Only a second finger starts a zoom.
+ *
+ * The pinch is read from touch events rather than pointer events. With one
+ * finger free to pan, the browser treats a second one as a two-finger scroll
+ * and cancels the pointers out from under the gesture; a touchmove can say
+ * no to that, and does.
+ */
+function armZoomGestures(box: HTMLElement): void {
+  let pinchFrom = 0;
+  let zoomFrom = 1;
+  /**
+   * When two fingers were last on the board.
+   *
+   * Lifting a pinch fires one pointerup per finger, a few milliseconds
+   * apart. Read as taps, that is a double-tap — so every pinch ended by
+   * undoing itself, which looked exactly like the zoom not working.
+   */
+  let lastPinch = 0;
+
+  const spread = (
+    touches: TouchList,
+  ): { gap: number; mid: { x: number; y: number } } | null => {
+    const a = touches[0];
+    const b = touches[1];
+    if (a === undefined || b === undefined) return null;
+    return {
+      gap: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+      mid: { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
+    };
+  };
+
+  box.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length !== 2) return;
+      const now = spread(e.touches);
+      if (now === null) return;
+      pinchFrom = now.gap;
+      zoomFrom = zoom;
+      lastPinch = Date.now();
+    },
+    { passive: false },
+  );
+  box.addEventListener(
+    'touchmove',
+    (e) => {
+      if (e.touches.length !== 2 || pinchFrom <= 0) return;
+      const now = spread(e.touches);
+      if (now === null || now.gap <= 0) return;
+      // Say no to the two-finger scroll the browser would otherwise do.
+      if (e.cancelable) e.preventDefault();
+      lastPinch = Date.now();
+      setZoom(zoomFrom * (now.gap / pinchFrom), now.mid);
+    },
+    { passive: false },
+  );
+  const endPinch = (e: TouchEvent): void => {
+    if (e.touches.length < 2) pinchFrom = 0;
+    if (e.touches.length > 0) lastPinch = Date.now();
+  };
+  box.addEventListener('touchend', endPinch);
+  box.addEventListener('touchcancel', endPinch);
+
+  // A mouse wheel scrolls the board; held with ctrl (or ⌘) it zooms, which
+  // is also what a trackpad pinch sends.
+  box.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      setZoom(zoom * (e.deltaY > 0 ? 0.92 : 1.08), { x: e.clientX, y: e.clientY });
+    },
+    { passive: false },
+  );
+
+  // Double-tap the felt to go in, again to come back out. Not on a tile or a
+  // spot: a double-tap there is two taps at something, not a gesture.
+  let lastTap = 0;
+  box.addEventListener('pointerup', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.slot, .tile, button') !== null) return;
+    // Not the second finger of a pinch, and not the moment one was lifted.
+    if (!e.isPrimary) return;
+    const now = Date.now();
+    if (now - lastPinch < 500) {
+      lastTap = 0;
+      return;
+    }
+    if (now - lastTap < 320) {
+      setZoom(zoom > 1 ? 1 : 2, { x: e.clientX, y: e.clientY });
+      lastTap = 0;
+      return;
+    }
+    lastTap = now;
+  });
+}
+
+/**
+ * What a zoom button should zoom around.
+ *
+ * The middle of the chain you can currently see — not the middle of the
+ * screen. The board carries a margin of empty felt on every side, kept so
+ * the spots have somewhere to go, and zooming about the screen's middle
+ * magnifies that margin and leaves you looking at nothing. If the chain has
+ * been panned out of sight entirely, this brings it back.
+ */
+function centreOfBoard(): { x: number; y: number } | undefined {
+  const table = document.querySelector('.table');
+  if (table === null) return undefined;
+  const view = table.getBoundingClientRect();
+  const tiles = [...document.querySelectorAll('.pitch .tile')];
+  if (tiles.length === 0) return { x: view.left + view.width / 2, y: view.top + view.height / 2 };
+
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const tile of tiles) {
+    const r = tile.getBoundingClientRect();
+    left = Math.min(left, r.left);
+    top = Math.min(top, r.top);
+    right = Math.max(right, r.right);
+    bottom = Math.max(bottom, r.bottom);
+  }
+  // The part of the chain actually on screen, if any of it is.
+  const x0 = Math.max(left, view.left);
+  const x1 = Math.min(right, view.right);
+  const y0 = Math.max(top, view.top);
+  const y1 = Math.min(bottom, view.bottom);
+  const seen = x1 > x0 && y1 > y0;
+  return seen
+    ? { x: (x0 + x1) / 2, y: (y0 + y1) / 2 }
+    : { x: (left + right) / 2, y: (top + bottom) / 2 };
 }
 
 /**
