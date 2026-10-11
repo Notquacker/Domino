@@ -150,8 +150,30 @@ details.rules[open] summary::before { content: "▾ "; }
 }
 .endslot.live { border-color: var(--gold); color: var(--gold); background: #e3b45b22; }
 
-.status { text-align: center; padding: 7px 16px; font-size: 14px; min-height: 24px; }
-.status .me { color: var(--gold); font-weight: 700; }
+/* Whose turn it is. The badge keeps its size whichever name is in it, so
+   the board never shifts between turns. */
+.status { text-align: center; padding: 7px 16px 9px; font-size: 14px; }
+.whoseturn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 15px; border-radius: 999px;
+  border: 1px solid #ffffff1f; background: #0000002e; max-width: 100%;
+}
+.whoseturn .name {
+  font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.whoseturn .label {
+  font-size: 11.5px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.whoseturn.a { border-color: #74c6f26b; background: #74c6f21f; }
+.whoseturn.a .name { color: var(--team-a); }
+.whoseturn.b { border-color: #f09a746b; background: #f09a741f; }
+.whoseturn.b .name { color: var(--team-b); }
+/* Always drawn, so the line below it never moves. */
+.status .upnext { font-size: 11.5px; color: var(--muted); min-height: 15px; margin-top: 3px; }
+/* The shelf the tiles sit on takes the same colour as the badge. */
+.handzone.a { border-top-color: #74c6f2a6; box-shadow: inset 0 2px 0 #74c6f2a6; }
+.handzone.b { border-top-color: #f09a74a6; box-shadow: inset 0 2px 0 #f09a74a6; }
 
 .handzone { background: #00000052; border-top: 1px solid #ffffff1c; padding: 10px 0 12px; }
 .hand { display: flex; gap: 6px; padding: 0 16px 4px; overflow-x: auto; align-items: flex-end; scrollbar-width: none; }

@@ -262,13 +262,22 @@ a unit test can see. They need Playwright installed (`npm i -D playwright`):
 npm run build:demo && node scripts/check-placement.mjs    # the pass-and-play demo
 node server/dist/index.js &                               # then, against a live server:
 node scripts/check-client-placement.mjs http://127.0.0.1:3000/
+node scripts/check-turn.mjs http://127.0.0.1:3000/        # can you tell whose turn it is?
 node scripts/check-keyboard.mjs http://127.0.0.1:3000/    # can you type on a phone?
 ```
 
-Each one drops tiles on corners and measures where they ended up relative to
-the tile they were laid against, which is how the fix for a dropped direction
-was found: the move was accepted, the board was sound, and the tile was simply
-somewhere else.
+The placement checks drop tiles on corners and measure where they ended up
+relative to the tile they were laid against, which is how the fix for a
+dropped direction was found: the move was accepted, the board was sound, and
+the tile was simply somewhere else.
+
+`check-turn.mjs` plays a game at two phone widths and checks the page answers
+"whose turn is it?" the same way twice over — the badge under the board and
+the marked card must name the same player — and that no name is cut off. It
+exists because a generic class name has twice reshaped something it was never
+meant to touch: a `.board` rule meant for the leaderboard moved every tile on
+the table, and a `.turn` rule meant for the badge collapsed the card of the
+player it was pointing at. Both looked fine in the code.
 
 ## Try it without a server
 

@@ -152,7 +152,7 @@ let smashedBy: string | null = null;
  * the viewer has interacted, which browsers require anyway.
  */
 let audio: AudioContext | null = null;
-function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win' | 'smash'): void {
+function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win' | 'smash' | 'yours'): void {
   if (muted) return;
   try {
     const Ctor =
@@ -169,6 +169,9 @@ function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win' | 'smash'): void
       round: [440, 0.16, 'triangle'],
       win: [660, 0.3, 'triangle'],
       smash: [70, 0.45, 'square'],
+      // Your turn: two quick rising notes, so it is not mistaken for the
+      // thud of somebody laying a tile.
+      yours: [520, 0.14, 'triangle'],
     };
     const [freq, dur, type] = notes[kind];
     const osc = audio.createOscillator();
@@ -176,6 +179,9 @@ function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win' | 'smash'): void
     osc.type = type;
     osc.frequency.setValueAtTime(freq, audio.currentTime);
     if (kind === 'win') osc.frequency.exponentialRampToValueAtTime(freq * 2, audio.currentTime + dur);
+    if (kind === 'yours') {
+      osc.frequency.setValueAtTime(freq * 1.5, audio.currentTime + dur / 2);
+    }
     // A slam drops in pitch like something heavy landing.
     if (kind === 'smash') {
       osc.frequency.exponentialRampToValueAtTime(28, audio.currentTime + dur);
@@ -189,6 +195,30 @@ function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win' | 'smash'): void
   } catch {
     /* audio is a nicety; never let it break a turn */
   }
+}
+
+/**
+ * Say something when the turn comes round to you.
+ *
+ * A phone face-up on the table between hands is not being watched, and the
+ * table carries on without you until the clock runs out. A short note and a
+ * buzz carry across a room in a way a gold border does not. Both ride the
+ * same mute switch, so one tap turns off every interruption.
+ */
+let wasMyTurn = false;
+function noteTurn(): void {
+  const now = myTurn();
+  if (now && !wasMyTurn) {
+    sfx('yours');
+    if (!muted) {
+      try {
+        navigator.vibrate?.([0, 45, 70, 45]);
+      } catch {
+        /* no vibration here; the sound and the gold edge still carry it */
+      }
+    }
+  }
+  wasMyTurn = now;
 }
 
 const net = new Net(onMessage, onStatus, onReady);
@@ -262,11 +292,13 @@ function onMessage(msg: ServerMessage): void {
       intent = { kind: 'idle' };
       error = '';
       view = msg.view;
+      noteTurn();
       break;
     case 'state':
       // Our move landed, so there is nothing outstanding to blame a refusal on.
       pending = null;
       view = msg.view;
+      noteTurn();
       break;
     case 'chat':
       chats.push({ from: msg.from, text: msg.text });
@@ -1337,7 +1369,9 @@ function renderTopbar(v: PlayerView): HTMLElement {
   bar.appendChild(score);
 
   const sound = el('button', 'iconbtn', muted ? '🔇' : '🔊') as HTMLButtonElement;
-  sound.title = muted ? 'Sound off' : 'Sound on';
+  // The buzz when your turn comes round rides this switch too, so one tap
+  // turns off every interruption rather than leaving half of them on.
+  sound.title = muted ? 'Sound and buzz off' : 'Sound and buzz on';
   sound.setAttribute('aria-label', muted ? 'Turn sound on' : 'Turn sound off');
   sound.addEventListener('click', () => {
     muted = !muted;
@@ -1378,13 +1412,23 @@ function renderOpponents(v: PlayerView): HTMLElement {
     const nameRow = el('div', 'name');
     if (info !== null) nameRow.appendChild(el('span', `dot${info.connected ? '' : ' off'}`));
     nameRow.appendChild(el('span', undefined, info?.name ?? 'Empty'));
-    // Say it in words as well as colour: on a small screen a tinted border is
-    // easy to miss, and colour alone is no use to everyone.
-    if (onTurn) nameRow.appendChild(el('span', 'tag now', 'PLAYING'));
-    else if (next) nameRow.appendChild(el('span', 'tag soon', 'NEXT'));
     card.appendChild(nameRow);
+
+    // The state goes on the second line rather than beside the name. Next to
+    // it, a badge and three cards do not fit across a narrow phone without
+    // cutting the very names they are labelling — and down here the word fits
+    // in full. Said in words as well as colour: a tinted border is easy to
+    // miss on a phone, and colour alone is no use to everyone.
+    //
+    // It takes the place of "Opponent" or "Your partner" on the one card it
+    // applies to. Whose side they are on is still there in the coloured edge,
+    // and in the seating: your partner is always the middle card.
     const relation = seat === ((base + 2) % 4) ? 'Your partner' : 'Opponent';
-    card.appendChild(el('div', 'sub', `${relation} · ${info?.tiles ?? 0} tiles`));
+    const state = onTurn ? 'PLAYING' : next ? 'Next' : relation;
+    const sub = el('div', `sub${onTurn ? ' now' : next ? ' soon' : ''}`);
+    sub.appendChild(el('span', 'state', state));
+    sub.appendChild(el('span', undefined, ` · ${info?.tiles ?? 0} tiles`));
+    card.appendChild(sub);
     card.appendChild(tileBacks(info?.tiles ?? 0));
     wrap.appendChild(card);
   }
@@ -1552,38 +1596,79 @@ function renderTable(v: PlayerView): HTMLElement {
   return box;
 }
 
+/**
+ * Whose turn it is, said plainly.
+ *
+ * Four people round a table on four phones cannot see each other's screens,
+ * so the one thing the page has to answer at a glance is "is it me?". It is
+ * a badge rather than a line of prose, and it keeps its size whichever
+ * answer it is giving: a banner that grew on your turn would shunt the board
+ * up and down all game.
+ */
 function renderStatus(v: PlayerView): HTMLElement {
   const status = el('div', 'status');
   if (v.you === null) {
     status.appendChild(el('span', undefined, 'You are watching this table.'));
     return status;
   }
-  if (myTurn()) {
-    // No hint about whether anything fits — that is the player's problem now.
-    status.appendChild(el('span', 'turnme', 'Your turn.'));
+
+  const mine = myTurn();
+  const team = v.turn === null ? '' : ` ${teamClass(v.turn)}`;
+  // `whoseturn`, not `turn`: an opponent's card already answers to `turn`,
+  // and a bare `.turn` rule here reshaped the card of the very player it was
+  // meant to point at.
+  const banner = el('div', `whoseturn ${mine ? 'mine' : 'theirs'}${team}`);
+
+  const who = v.turn === null ? null : v.seats[v.turn];
+  if (mine) {
+    // Still no hint about whether anything fits — that is yours to work out.
+    banner.appendChild(el('span', 'label', 'YOUR TURN'));
   } else {
-    const who = v.turn === null ? null : v.seats[v.turn];
-    status.appendChild(el('span', undefined, who ? `${who.name} is playing` : 'Waiting…'));
-    // Who to watch for next, so nobody has to count seats round the table.
-    if (v.turn !== null) {
-      const after = nextSeat(v.turn);
-      const label = after === v.you ? 'you' : (v.seats[after]?.name ?? `seat ${after + 1}`);
-      status.appendChild(el('span', 'upnext', ` · then ${label}`));
-    }
+    banner.appendChild(el('span', 'label', 'Waiting for'));
+    banner.appendChild(el('span', 'name', who?.name ?? '…'));
   }
+  // The words are spaced by the layout, not by the text, so read aloud they
+  // would run together. Say it once more in a whole sentence, and let a
+  // screen reader announce it when the turn moves.
+  banner.setAttribute('role', 'status');
+  banner.setAttribute('aria-live', 'polite');
+  banner.setAttribute(
+    'aria-label',
+    mine ? 'Your turn' : `Waiting for ${who?.name ?? 'the next player'}`,
+  );
   if (v.turnDeadline !== null) {
     const clock = el('span', 'clock', '');
     clock.id = 'clock';
-    // Needs its own separator: without one it runs straight on from the name
-    // before it and reads as "then you 60s".
-    status.appendChild(el('span', 'upnext', ' · '));
-    status.appendChild(clock);
+    banner.appendChild(clock);
   }
+  status.appendChild(banner);
+
+  // Who follows, so nobody has to count seats round the table. Always drawn,
+  // empty if there is nothing to say, so the line below never moves.
+  const after = v.turn === null ? null : nextSeat(v.turn);
+  const label =
+    after === null ? '' : after === v.you ? 'you' : (v.seats[after]?.name ?? `seat ${after + 1}`);
+  status.appendChild(el('div', 'upnext', label === '' ? '' : `then ${label}`));
   return status;
 }
 
 function renderHand(v: PlayerView): HTMLElement {
-  const zone = el('div', 'handzone');
+  // Your own hand is where your eyes already are, so it carries the loudest
+  // part of the answer: on your turn its edge goes gold and the whole shelf
+  // lifts. The class only changes colours and shadows — nothing that would
+  // change its height and shunt the board around every turn.
+  const zone = el('div', `handzone${myTurn() ? ' mine' : ''}`);
+
+  // The turn clock, draining along the top of the shelf. A number alone does
+  // not read at arm's length, and watching someone else's time run down is
+  // half of knowing whose turn it is. Always drawn — it doubles as the gold
+  // edge on your turn, and a bar that came and went would move everything
+  // below it. With no clock at this table it simply stays full.
+  const track = el('div', 'clockbar');
+  const fill = el('i');
+  fill.id = 'clockfill';
+  track.appendChild(fill);
+  zone.appendChild(track);
 
   const hand = el('div', 'hand');
 
@@ -1953,12 +2038,25 @@ function render(): void {
 
 /** The turn clock updates on its own so a re-render never drops a selection. */
 function tickClock(): void {
-  const node = document.getElementById('clock');
   const deadline = view?.turnDeadline ?? null;
-  if (node === null || deadline === null) return;
-  const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-  node.textContent = `${left}s`;
-  node.className = left <= 10 ? 'clock low' : 'clock';
+  const total = view?.rules.turnSeconds ?? null;
+  const node = document.getElementById('clock');
+  const fill = document.getElementById('clockfill');
+  if (deadline === null) {
+    // No clock at this table: leave the bar full rather than empty, which
+    // would read as time already up.
+    if (fill !== null) fill.style.width = '100%';
+    return;
+  }
+  const left = Math.max(0, (deadline - Date.now()) / 1000);
+  if (node !== null) {
+    node.textContent = `${Math.ceil(left)}s`;
+    node.className = left <= 10 ? 'clock low' : 'clock';
+  }
+  if (fill !== null && total !== null && total > 0) {
+    fill.style.width = `${Math.max(0, Math.min(100, (left / total) * 100))}%`;
+    fill.className = left <= 10 ? 'low' : '';
+  }
 }
 
 let resizeTimer: number | null = null;

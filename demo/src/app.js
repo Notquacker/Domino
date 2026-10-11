@@ -572,20 +572,33 @@
     return box;
   }
 
+  /**
+   * Whose turn it is. Everyone is looking at the same screen here, so the
+   * question is not "is it me" but "whose hand am I looking at" — which is
+   * easy to lose track of after a hand-off. The name goes in a badge in
+   * their team's colour, and the shelf their tiles sit on takes the same
+   * colour, so the two agree at a glance.
+   */
   function renderStatus() {
     var s = el('div', 'status');
     if (S.match.phase !== 'playing') return s;
     var name = S.names[turn()] || 'Seat ' + (turn() + 1);
     // No hint about whether anything fits — that is the player's problem.
-    s.appendChild(el('span', 'me', name + ' to play'));
+    var badge = el('div', 'whoseturn ' + teamCls(turn()));
+    badge.appendChild(el('span', 'name', name));
+    badge.appendChild(el('span', 'label', 'to play'));
+    badge.setAttribute('role', 'status');
+    badge.setAttribute('aria-live', 'polite');
+    badge.setAttribute('aria-label', name + ' to play');
+    s.appendChild(badge);
     var after = (turn() + 1) % 4;
-    s.appendChild(el('span', 'upnext',
-      ' · then ' + (S.names[after] || 'Seat ' + (after + 1))));
+    s.appendChild(el('div', 'upnext',
+      'then ' + (S.names[after] || 'Seat ' + (after + 1))));
     return s;
   }
 
   function renderHand() {
-    var zone = el('div', 'handzone');
+    var zone = el('div', 'handzone ' + teamCls(turn()));
 
     var hand = el('div', 'hand');
     var tiles = round().hands[turn()];

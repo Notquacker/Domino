@@ -189,7 +189,9 @@ input::placeholder { color: var(--muted); }
 .topbar .code { letter-spacing: 0.16em; font-weight: 700; color: var(--gold); }
 
 .opponents {
-  display: flex; gap: 8px; padding: 10px 14px 4px;
+  /* Tight on purpose: three cards and three names have to fit across the
+     narrowest phone without any of the names being cut. */
+  display: flex; gap: 6px; padding: 10px 12px 4px;
   overflow-x: auto; scrollbar-width: none;
 }
 .opponents::-webkit-scrollbar { display: none; }
@@ -197,7 +199,7 @@ input::placeholder { color: var(--muted); }
   /* Share the width evenly and let long names truncate. Sized to content,
      the PLAYING badge would push the third card off the screen edge. */
   flex: 1 1 0; min-width: 0;
-  padding: 8px 10px; border-radius: 10px;
+  padding: 8px 8px; border-radius: 10px;
   background: #0000002e; border: 1px solid #ffffff14;
 }
 /* Whose turn it is, and who follows. The one playing is loud; the one up
@@ -206,19 +208,17 @@ input::placeholder { color: var(--muted); }
 .opp.turn {
   /* The card on turn carries an extra badge, so give it a little more of the
      row rather than truncating the name it is drawing attention to. */
-  flex-grow: 1.45;
+  flex-grow: 1.2;
   border-color: var(--gold);
   box-shadow: 0 0 0 1px var(--gold) inset, 0 0 14px #e8b65c33;
   background: #e8b65c14;
 }
 .opp.next { border-color: #e8b65c4d; }
-.opp .tag {
-  flex: 0 0 auto;
-  font-size: 9px; font-weight: 800; letter-spacing: 0.08em;
-  padding: 2px 5px; border-radius: 999px;
-}
-.opp .tag.now { background: var(--gold); color: #10231c; }
-.opp .tag.soon { background: #e8b65c2e; color: var(--gold); }
+/* The state sits on the second line, where the whole word fits. */
+.opp .sub .state { font-weight: 800; letter-spacing: 0.04em; }
+.opp .sub.now { color: var(--gold); }
+.opp .sub.now .state { font-size: 10.5px; }
+.opp .sub.soon .state { color: var(--gold); opacity: 0.85; }
 .status .upnext { color: var(--muted); }
 
 /* The one playing gets a gentle pulse so a glance finds it. */
@@ -229,7 +229,7 @@ input::placeholder { color: var(--muted); }
   0%, 100% { box-shadow: 0 0 0 1px var(--gold) inset, 0 0 10px #e8b65c26; }
   50%      { box-shadow: 0 0 0 1px var(--gold) inset, 0 0 18px #e8b65c59; }
 }
-.opp .name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.opp .name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 5px; }
 /* min-width:0 is what actually lets a flex child shrink far enough to
    ellipsize; without it the name keeps its full width and overflows. */
 .opp .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -263,17 +263,84 @@ input::placeholder { color: var(--muted); }
 .chain .empty-table { color: var(--muted); font-size: 14px; text-align: center; }
 
 
-.status {
-  text-align: center; padding: 6px 14px; font-size: 14px; min-height: 22px;
+/* ---------------- whose turn it is ---------------- */
+
+.status { text-align: center; padding: 6px 14px 8px; font-size: 14px; }
+
+/*
+ * The badge keeps the same shape whichever answer it is giving. One that
+ * grew on your turn would shunt the board up and down all game, which is
+ * exactly what makes a drag miss.
+ */
+.whoseturn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 15px; border-radius: 999px;
+  border: 1px solid #ffffff1f; background: #0000002e;
+  max-width: 100%;
 }
-.status .turnme { color: var(--gold); font-weight: 700; }
-.clock { font-variant-numeric: tabular-nums; color: var(--muted); }
+.whoseturn .label {
+  font-size: 11.5px; font-weight: 800; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.whoseturn .name {
+  font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Somebody else is thinking: their name in their team's colour, so the
+   badge also says which side the table is waiting on. */
+.whoseturn.theirs.teamA .name { color: var(--teamA); }
+.whoseturn.theirs.teamB .name { color: var(--teamB); }
+/* It is you. This is the one thing the screen has to answer across a room. */
+.whoseturn.mine {
+  border-color: var(--gold);
+  background: #e8b65c1f;
+  box-shadow: 0 0 0 1px var(--gold) inset, 0 0 20px #e8b65c3d;
+}
+.whoseturn.mine .label { color: var(--gold); font-size: 13px; letter-spacing: 0.12em; }
+@media (prefers-reduced-motion: no-preference) {
+  .whoseturn.mine { animation: yourturn 2.2s ease-in-out infinite; }
+}
+@keyframes yourturn {
+  0%, 100% { box-shadow: 0 0 0 1px var(--gold) inset, 0 0 12px #e8b65c2e; }
+  50%      { box-shadow: 0 0 0 1px var(--gold) inset, 0 0 24px #e8b65c66; }
+}
+.status .upnext {
+  /* Always drawn, empty when there is nothing to say, so it never moves. */
+  font-size: 11.5px; color: var(--muted); min-height: 15px; margin-top: 3px;
+}
+.clock { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+.whoseturn.mine .clock { color: var(--gold); }
 .clock.low { color: var(--danger); font-weight: 700; }
+
+/* The turn clock, draining. A number alone does not read at arm's length. */
+.clockbar { height: 3px; margin: 0 0 9px; background: #ffffff14; overflow: hidden; }
+.clockbar i {
+  display: block; height: 100%; width: 100%;
+  background: var(--muted); transition: width 0.5s linear;
+}
+.handzone.mine .clockbar i { background: var(--gold); }
+.clockbar i.low { background: var(--danger); }
+@media (prefers-reduced-motion: reduce) {
+  .clockbar i { transition: none; }
+  .whoseturn.mine { animation: none; }
+}
 
 .handzone {
   background: #0000004d;
   border-top: 1px solid #ffffff1a;
   padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+}
+/*
+ * Your hand is where your eyes already are, so it carries the loudest part
+ * of the answer. Only colours and shadows change — a thicker border would
+ * alter its height and move the board every time the turn came round.
+ */
+.handzone.mine {
+  /* The clock bar runs along the top of the shelf and is already gold on
+     your turn, so it is the edge. A second gold line from an inset shadow
+     read as a mistake. */
+  border-top-color: var(--gold);
+  background: #0a1f18;
+  box-shadow: 0 -14px 34px -12px #e8b65c4d;
 }
 .hand {
   display: flex; gap: 6px; padding: 0 14px 4px;
