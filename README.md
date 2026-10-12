@@ -269,6 +269,7 @@ node scripts/check-client-placement.mjs http://127.0.0.1:3000/
 node scripts/check-turn.mjs http://127.0.0.1:3000/        # can you tell whose turn it is?
 node scripts/check-zoom.mjs http://127.0.0.1:3000/        # does the board zoom and pan?
 node scripts/check-review.mjs http://127.0.0.1:3000/      # can you look at the table afterwards?
+node scripts/check-hand.mjs http://127.0.0.1:3000/        # is your hand centred and uncut?
 node scripts/check-keyboard.mjs http://127.0.0.1:3000/    # can you type on a phone?
 ```
 

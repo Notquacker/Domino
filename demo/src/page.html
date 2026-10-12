@@ -213,8 +213,20 @@ details.rules[open] summary::before { content: "▾ "; }
 .handzone.a { border-top-color: #74c6f2a6; box-shadow: inset 0 2px 0 #74c6f2a6; }
 .handzone.b { border-top-color: #f09a74a6; box-shadow: inset 0 2px 0 #f09a74a6; }
 
-.handzone { background: #00000052; border-top: 1px solid #ffffff1c; padding: 10px 0 12px; }
-.hand { display: flex; gap: 6px; padding: 0 16px 4px; overflow-x: auto; align-items: flex-end; scrollbar-width: none; }
+/* No padding above: the shelf's coloured edge sits flush against the
+   border. The room a lifted tile needs is inside .hand, where the clipping
+   happens. */
+.handzone { background: #00000052; border-top: 1px solid #ffffff1c; padding: 0 0 12px; }
+/* The space at the top is the room a tile rises into. This strip scrolls
+   sideways when a hand is wider than a narrow phone, and a scrolling box
+   clips both ways — without it the tile you reach for has its top sliced
+   off at the moment you touch it. `safe` centring keeps the first tile
+   reachable when there are more tiles than fit. */
+.hand {
+  display: flex; gap: 6px; padding: 16px 16px 4px;
+  overflow-x: auto; align-items: flex-end;
+  justify-content: safe center; scrollbar-width: none;
+}
 .hand::-webkit-scrollbar { display: none; }
 /* Room for two lines of hint whatever the hint says: without it the bar grew
    when a tile left the hand, pushing the table up mid-drag. */
@@ -245,8 +257,15 @@ details.rules[open] summary::before { content: "▾ "; }
 .pip { width: 100%; aspect-ratio: 1; border-radius: 50%; background: var(--ink); max-width: 7px; }
 .tile.inhand { cursor: pointer; transition: transform .1s ease, box-shadow .1s ease; }
 .tile.inhand.dead { opacity: .4; filter: grayscale(.6); cursor: default; }
-.tile.inhand.playable:hover { transform: translateY(-4px); }
-.tile.inhand.sel { transform: translateY(-9px); box-shadow: 0 0 0 2px var(--gold), 0 6px 13px #0009; }
+/* Rises and grows a little, so the one under the pointer is plainly the one
+   that would be played. */
+.tile.inhand.playable:hover {
+  transform: translateY(-7px) scale(1.05); box-shadow: 0 10px 18px #000a; z-index: 2;
+}
+.tile.inhand.sel {
+  transform: translateY(-9px) scale(1.05);
+  box-shadow: 0 0 0 2px var(--gold), 0 10px 18px #0009; z-index: 3;
+}
 
 /* ---------- overlays ---------- */
 .overlay {

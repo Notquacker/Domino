@@ -362,7 +362,7 @@ input::placeholder { color: var(--muted); }
 .clock.low { color: var(--danger); font-weight: 700; }
 
 /* The turn clock, draining. A number alone does not read at arm's length. */
-.clockbar { height: 3px; margin: 0 0 9px; background: #ffffff14; overflow: hidden; }
+.clockbar { height: 3px; margin: 0 0 6px; background: #ffffff14; overflow: hidden; }
 .clockbar i {
   display: block; height: 100%; width: 100%;
   background: var(--muted); transition: width 0.5s linear;
@@ -377,7 +377,10 @@ input::placeholder { color: var(--muted); }
 .handzone {
   background: #0000004d;
   border-top: 1px solid #ffffff1a;
-  padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+  /* No padding above: the clock bar is the shelf's edge and sits flush
+     against the border. The room a lifted tile needs is inside .hand,
+     where the clipping happens. */
+  padding: 0 0 calc(10px + env(safe-area-inset-bottom));
 }
 /*
  * Your hand is where your eyes already are, so it carries the loudest part
@@ -393,8 +396,21 @@ input::placeholder { color: var(--muted); }
   box-shadow: 0 -14px 34px -12px #e8b65c4d;
 }
 .hand {
-  display: flex; gap: 6px; padding: 0 14px 4px;
+  display: flex; gap: 6px;
+  /*
+   * The space at the top is the room a tile needs to rise into. This strip
+   * scrolls sideways when a hand is wider than a narrow phone, and a
+   * scrolling box clips both ways — so without it the tile you are reaching
+   * for had its top sliced off at the moment you touched it.
+   */
+  padding: 16px 14px 4px;
   overflow-x: auto; align-items: flex-end;
+  /*
+   * Centred, until there are more tiles than fit. `safe` is what keeps the
+   * first tile reachable then: plain centring would push the overflow off
+   * the left-hand side, where nothing can scroll back to it.
+   */
+  justify-content: safe center;
   scrollbar-width: none;
 }
 .hand::-webkit-scrollbar { display: none; }
@@ -451,11 +467,18 @@ input::placeholder { color: var(--muted); }
 
 .tile.inhand { cursor: pointer; }
 .tile.inhand.dead { opacity: 0.4; filter: grayscale(0.6); cursor: default; }
-.tile.inhand.playable:hover { transform: translateY(-4px); }
-.tile.inhand { transition: transform 0.1s ease, box-shadow 0.1s ease; }
+.tile.inhand { transition: transform 0.12s ease, box-shadow 0.12s ease; }
+/* Rises and grows a little, so the one under the pointer is plainly the one
+   that would be played. The room for it is the padding on .hand. */
+.tile.inhand.playable:hover {
+  transform: translateY(-7px) scale(1.05);
+  box-shadow: 0 10px 18px #000a;
+  z-index: 2;
+}
 .tile.inhand.sel {
-  transform: translateY(-8px);
-  box-shadow: 0 0 0 2px var(--gold), 0 6px 12px #0008;
+  transform: translateY(-9px) scale(1.05);
+  box-shadow: 0 0 0 2px var(--gold), 0 10px 18px #000a;
+  z-index: 3;
 }
 
 /* ---------------- overlay ---------------- */
