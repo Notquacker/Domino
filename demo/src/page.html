@@ -202,6 +202,11 @@ details.rules[open] summary::before { content: "▾ "; }
 .whoseturn.a .name { color: var(--team-a); }
 .whoseturn.b { border-color: #f09a746b; background: #f09a741f; }
 .whoseturn.b .name { color: var(--team-b); }
+/* The badge once the round is over: the same shape, so the board does not
+   shift when the game stops. */
+.whoseturn.over { gap: 10px; }
+.whoseturn.over .label { color: var(--text); }
+.whoseturn.over .small { padding: 5px 10px; font-size: 12px; }
 /* Always drawn, so the line below it never moves. */
 .status .upnext { font-size: 11.5px; color: var(--muted); min-height: 15px; margin-top: 3px; }
 /* The shelf the tiles sit on takes the same colour as the badge. */

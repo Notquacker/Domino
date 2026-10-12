@@ -206,6 +206,16 @@ function sfx(kind: 'place' | 'pass' | 'wrong' | 'round' | 'win' | 'smash' | 'you
  * same mute switch, so one tap turns off every interruption.
  */
 let wasMyTurn = false;
+/**
+ * Whether the result sheet has been put aside to look at the table.
+ *
+ * The sheet covers the board, and the board is the thing everyone wants to
+ * see the moment a round ends: how it finished, what the last tile was, who
+ * was holding what. Cleared whenever the table moves on, so the next result
+ * still arrives in front of you.
+ */
+let sheetHidden = false;
+
 function noteTurn(): void {
   const now = myTurn();
   if (now && !wasMyTurn) {
@@ -389,6 +399,9 @@ function onMessage(msg: ServerMessage): void {
     clearDrag();
   }
   if (msg.t === 'state' && msg.view.phase !== lastPhase) {
+    // A result put aside belongs to the round it came from; the next one
+    // arrives in front of you again.
+    sheetHidden = false;
     if (msg.view.phase === 'matchOver') {
       sfx('win');
       void refreshAccount();
@@ -907,6 +920,14 @@ function renderLanding(): HTMLElement {
 
   if (error) wrap.appendChild(el('div', 'err', error));
 
+  // Who you are comes first. Signed in, this is the card you glance at to
+  // check the wins are going to the right name; signed out, it is the ask
+  // to sign in — and after the table has started there is no going back to
+  // it, so it belongs above the buttons that start one.
+  wrap.appendChild(renderSignInCard());
+  const adminCard = renderAdminCard();
+  if (adminCard !== null) wrap.appendChild(adminCard);
+
   const nameCard = el('div', 'card');
   nameCard.appendChild(el('h2', undefined, 'Your name'));
   const nameInput = el('input') as HTMLInputElement;
@@ -1209,9 +1230,6 @@ function renderLanding(): HTMLElement {
   joinCard.appendChild(joinRow);
   wrap.appendChild(joinCard);
 
-  wrap.appendChild(renderSignInCard());
-  const adminCard = renderAdminCard();
-  if (adminCard !== null) wrap.appendChild(adminCard);
   wrap.appendChild(renderLeaderboard());
 
   const accountCard = renderAccountCard();
@@ -2091,6 +2109,7 @@ function renderLog(v: PlayerView): HTMLElement {
 
 function renderOverlay(v: PlayerView): HTMLElement | null {
   if (v.phase !== 'roundOver' && v.phase !== 'matchOver') return null;
+  if (sheetHidden) return null;
   const result = v.lastResult;
   const overlay = el('div', 'overlay');
   const sheet = el('div', 'sheet');
@@ -2230,9 +2249,43 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
     });
     actions.appendChild(leave);
   }
+  // The board is still there behind this. Let people go and look at it —
+  // how the round finished and what the last tile was is most of the
+  // conversation after a hand.
+  const peek = el('button', 'ghost', 'Look at the table') as HTMLButtonElement;
+  peek.addEventListener('click', () => {
+    sheetHidden = true;
+    render();
+  });
+  actions.appendChild(peek);
+
   sheet.appendChild(actions);
   overlay.appendChild(sheet);
   return overlay;
+}
+
+/**
+ * What stands in for the turn badge once the round is over.
+ *
+ * The badge below the board would otherwise still be naming whoever was on
+ * turn when it ended, which is nobody now. This says where the game has got
+ * to and offers the sheet back.
+ */
+function renderResultBar(v: PlayerView): HTMLElement {
+  const status = el('div', 'status');
+  const bar = el('div', 'whoseturn over');
+  bar.appendChild(
+    el('span', 'label', v.phase === 'matchOver' ? 'Match over' : 'Round over'),
+  );
+  const show = el('button', 'small gold', 'Show the result') as HTMLButtonElement;
+  show.addEventListener('click', () => {
+    sheetHidden = false;
+    render();
+  });
+  bar.appendChild(show);
+  status.appendChild(bar);
+  status.appendChild(el('div', 'upnext', 'The tiles are as they were left.'));
+  return status;
 }
 
 function renderGame(v: PlayerView): HTMLElement {
@@ -2243,7 +2296,8 @@ function renderGame(v: PlayerView): HTMLElement {
   }
   wrap.appendChild(renderOpponents(v));
   wrap.appendChild(renderTable(v));
-  wrap.appendChild(renderStatus(v));
+  const over = v.phase === 'roundOver' || v.phase === 'matchOver';
+  wrap.appendChild(over ? renderResultBar(v) : renderStatus(v));
   if (error) {
     const box = el('div', 'err', error);
     box.style.margin = '0 14px 8px';

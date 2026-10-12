@@ -22,6 +22,10 @@ Curaçao-style partnership dominoes:
   players make the shape of the chain between them, the way they would with a
   real set on a real table; nothing folds it for them. On the opening lead,
   where there is nothing to choose between, the whole table is one target.
+- **The table stays up after the round.** The result sheet has a "Look at
+  the table" button: put it aside and the board is exactly as it was left,
+  zoom and all, with the result a tap away again. How a hand finished and
+  what the last tile was is most of the conversation afterwards.
 - **Passing is a choice.** You may pass at any time, even holding a playable
   tile. But a pass made on a tile you could have played **loses your team the
   whole round** — you score nothing, even if you went out first, and the other
@@ -264,6 +268,7 @@ node server/dist/index.js &                               # then, against a live
 node scripts/check-client-placement.mjs http://127.0.0.1:3000/
 node scripts/check-turn.mjs http://127.0.0.1:3000/        # can you tell whose turn it is?
 node scripts/check-zoom.mjs http://127.0.0.1:3000/        # does the board zoom and pan?
+node scripts/check-review.mjs http://127.0.0.1:3000/      # can you look at the table afterwards?
 node scripts/check-keyboard.mjs http://127.0.0.1:3000/    # can you type on a phone?
 ```
 

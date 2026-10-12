@@ -33,6 +33,9 @@
     dragOver: null,
     messy: false,
     accusing: false,
+    /* A result put aside to look at the board. Cleared whenever the table
+       moves on, so the next one arrives in front of you again. */
+    sheetHidden: false,
     smashed: false,
     banner: null
   };
@@ -254,6 +257,7 @@
   }
 
   function deal() {
+    S.sheetHidden = false;
     clearDrag();
     S.accusing = false;
     S.match = D.newMatch(S.rules, Math.random);
@@ -266,6 +270,7 @@
     render();
   }
   function nextRound() {
+    S.sheetHidden = false;
     clearDrag();
     S.match = D.startNextRound(S.match, Math.random);
     S.messy = false;
@@ -394,9 +399,29 @@
     var go = el('button', 'gold', 'I am ' + (S.names[seat] || 'Seat ' + (seat + 1)) + ' — show my hand');
     go.addEventListener('click', function () { S.screen = 'table'; render(); });
     actions.appendChild(go);
+    /* The board is still there behind this. How the round finished and what
+       the last tile was is most of the conversation afterwards. */
+    var peek = el('button', 'ghost', 'Look at the table');
+    peek.addEventListener('click', function () { S.sheetHidden = true; render(); });
+    actions.appendChild(peek);
+
     card.appendChild(actions);
     ov.appendChild(card);
     return ov;
+  }
+
+  /* What stands in for the turn badge once the round is over: the badge
+     would otherwise still be naming whoever was on turn when it ended. */
+  function renderResultBar() {
+    var s = el('div', 'status');
+    var bar = el('div', 'whoseturn over');
+    bar.appendChild(el('span', 'label', S.match.phase === 'matchOver' ? 'Match over' : 'Round over'));
+    var show = el('button', 'ghost small', 'Show the result');
+    show.addEventListener('click', function () { S.sheetHidden = false; render(); });
+    bar.appendChild(show);
+    s.appendChild(bar);
+    s.appendChild(el('div', 'upnext', 'The tiles are as they were left.'));
+    return s;
   }
 
   /* ---------- table ---------- */
@@ -869,6 +894,7 @@
   function renderResult() {
     var phase = S.match.phase;
     if (phase !== 'roundOver' && phase !== 'matchOver') return null;
+    if (S.sheetHidden) return null;
     var r = S.match.lastResult;
     var ov = el('div', 'overlay');
     var card = el('div', 'card');
@@ -983,9 +1009,29 @@
       back.addEventListener('click', function () { S.screen = 'setup'; S.match = null; render(); });
       actions.appendChild(back);
     }
+    /* The board is still there behind this. How the round finished and what
+       the last tile was is most of the conversation afterwards. */
+    var peek = el('button', 'ghost', 'Look at the table');
+    peek.addEventListener('click', function () { S.sheetHidden = true; render(); });
+    actions.appendChild(peek);
+
     card.appendChild(actions);
     ov.appendChild(card);
     return ov;
+  }
+
+  /* What stands in for the turn badge once the round is over: the badge
+     would otherwise still be naming whoever was on turn when it ended. */
+  function renderResultBar() {
+    var s = el('div', 'status');
+    var bar = el('div', 'whoseturn over');
+    bar.appendChild(el('span', 'label', S.match.phase === 'matchOver' ? 'Match over' : 'Round over'));
+    var show = el('button', 'ghost small', 'Show the result');
+    show.addEventListener('click', function () { S.sheetHidden = false; render(); });
+    bar.appendChild(show);
+    s.appendChild(bar);
+    s.appendChild(el('div', 'upnext', 'The tiles are as they were left.'));
+    return s;
   }
 
   /* ---------- render ---------- */
@@ -1015,7 +1061,8 @@
     if (S.banner) root.appendChild(el('div', 'smashbanner', '💥  ' + S.banner));
     root.appendChild(renderOpps());
     root.appendChild(renderTable());
-    root.appendChild(renderStatus());
+    var over = S.match.phase === 'roundOver' || S.match.phase === 'matchOver';
+    root.appendChild(over ? renderResultBar() : renderStatus());
     root.appendChild(renderHand());
 
     // While the table is being slammed, get the sheet out of the way so the

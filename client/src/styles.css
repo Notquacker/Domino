@@ -219,6 +219,12 @@ input::placeholder { color: var(--muted); }
 .opp .sub.now { color: var(--gold); }
 .opp .sub.now .state { font-size: 10.5px; }
 .opp .sub.soon .state { color: var(--gold); opacity: 0.85; }
+/* The badge once the round is over: the same shape, so the board does not
+   shift when the game stops. */
+.whoseturn.over { gap: 10px; }
+.whoseturn.over .label { color: var(--text); }
+.whoseturn.over .small { padding: 5px 10px; font-size: 12px; }
+
 .status .upnext { color: var(--muted); }
 
 /* The one playing gets a gentle pulse so a glance finds it. */
