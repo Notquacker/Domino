@@ -16,12 +16,14 @@ import {
   DEFAULT_RULES,
   applyMove,
   directionsAt,
+  isDouble,
   isSound,
   laidTiles,
   layout,
   legalMoves,
   newMatch,
   openEnds,
+  openerIndexOf,
   outwardDir,
   overlaps,
   placeTile,
@@ -94,6 +96,32 @@ describe('laying out a chain', () => {
     const board = placeTile([], '0-1', 'right');
     const allowed = directionsAt(laidTiles(board), 0, '1-2', 'right');
     assert.ok(!allowed.includes(2), 'going back left from a rightward end is not a direction');
+  });
+
+  it('never lets a double turn a corner', () => {
+    // A double lies across the line rather than along it, so it has no end
+    // to turn with. Let it and it comes to rest flat against its neighbour,
+    // long edge to long edge, with the halves that are meant to match never
+    // touching — which is what a real set cannot do.
+    let board = placeTile([], '6-6', 'right');
+    board = placeTile(board, '2-6', 'left', undefined, '6-6');
+    const tiles = laidTiles(board);
+    const opener = openerIndexOf(board, '6-6');
+
+    assert.deepEqual(
+      directionsAt(tiles, opener, '2-2', 'left'),
+      [outwardDir(tiles, opener, 'left')],
+      'a double may only carry straight on',
+    );
+    assert.ok(
+      directionsAt(tiles, opener, '2-5', 'left').length > 1,
+      'an ordinary tile may still turn a corner',
+    );
+
+    // And the table ignores a direction it does not allow, so a client that
+    // asks for one anyway still gets a sound board.
+    const laid = placeTile(board, '2-2', 'left', 1, '6-6');
+    assert.equal(laid[0]?.dir, outwardDir(tiles, opener, 'left'), 'laid straight on anyway');
   });
 
   it('refuses a corner on the tile straight after a double', () => {
@@ -180,6 +208,30 @@ describe('boards played out with the shape chosen at random', () => {
         );
       }
     }
+  });
+
+  it('always lays a double across the line, whatever shape was chosen', () => {
+    // Across the line means at right angles to both its neighbours, every
+    // time. Two in a row lying the same way is a double laid alongside its
+    // neighbour instead of meeting it.
+    let pairs = 0;
+    for (let seed = 1; seed <= 150; seed++) {
+      const { board, opener } = playOut(seed);
+      if (board.length < 2) continue;
+      const out = layout(board, opener);
+      for (let i = 0; i + 1 < out.placements.length; i++) {
+        const a = out.placements[i] as (typeof out.placements)[number];
+        const b = out.placements[i + 1] as (typeof out.placements)[number];
+        if (!isDouble(a.id) && !isDouble(b.id)) continue;
+        pairs++;
+        assert.notEqual(
+          a.w > a.h,
+          b.w > b.h,
+          `seed ${seed}: ${a.id} and ${b.id} lie the same way round`,
+        );
+      }
+    }
+    assert.ok(pairs > 200, `too few pairs to have proved anything: ${pairs}`);
   });
 
   it('keeps the matching pips together however the shape was chosen', () => {

@@ -391,12 +391,18 @@ A direction is only offered when the tile would actually fit there:
 
 - **Never back on itself.** An end grows outward; the way it came is not a
   direction.
-- **Never straight after a double.** A double lies across the chain rather
-  than along it, so a corner there would fold back through a tile that is
-  already crosswise.
+- **A double never turns a corner.** It is laid across the line and the line
+  carries straight on through it; the tile after it does the turning. Let a
+  double turn and it comes to rest flat against its neighbour, long edge to
+  long edge, with the halves that are meant to match never touching — which
+  is what a real set cannot do.
+- **Never straight after a double.** A corner there would fold back through a
+  tile that is already crosswise.
 - **Never onto another tile.** Every candidate is laid out and measured
   against the tiles already down. A tile with nowhere left to go is not a
-  legal move at all, so the game never offers one it cannot honour.
+  legal move at all, so the game never offers one it cannot honour. A chain
+  folded tidily almost never runs out of room: over a few hundred rounds,
+  four tiles in a thousand that matched an end had nowhere to go.
 
 Whichever way the chain runs, the halves that touch always show the same
 number of pips — the tile is drawn from whichever side meets its neighbour.

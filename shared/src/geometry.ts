@@ -348,8 +348,15 @@ export function directionsAt(
 
   return DIRS.filter((dir) => {
     if (dir === back) return false;
-    // A double lies across the chain, so a corner on the tile straight after
-    // one folds back through a tile that is already crosswise.
+    // A double lies across the chain rather than along it, so it has no end
+    // to turn a corner with. Let it and it comes to rest flat against its
+    // neighbour, long edge to long edge, with the halves that are supposed
+    // to match never touching at all. A double is laid across the line and
+    // the line carries straight on through it; the tile after it does the
+    // turning.
+    if (dir !== away && isDouble(id)) return false;
+    // And a corner on the tile straight after a double folds back through a
+    // tile that is already crosswise.
     if (dir !== away && isDouble(neighbour.id)) return false;
     const next: LaidTile[] =
       end === 'right' ? [...tiles, { id, dir }] : [{ id, dir }, ...tiles];
