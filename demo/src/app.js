@@ -410,6 +410,38 @@
     return ov;
   }
 
+  /*
+   * What everyone was left holding. Only once the round is over — it fills
+   * the room under the board and settles the two arguments that always
+   * follow a hand: who was stuck, and whether the pips add up.
+   */
+  function renderRevealed() {
+    var phase = S.match.phase;
+    if (phase !== 'roundOver' && phase !== 'matchOver') return null;
+    var hands = round() ? round().hands : null;
+    if (!hands) return null;
+    var wrap = el('div', 'revealed');
+    for (var seat = 0; seat < 4; seat++) {
+      var tiles = hands[seat] || [];
+      var who = el('div', 'revealseat ' + teamCls(seat));
+      var head = el('div', 'revealname');
+      head.appendChild(el('span', null, S.names[seat] || 'Seat ' + (seat + 1)));
+      var pips = tiles.reduce(function (sum, id) { return sum + D.tilePips(id); }, 0);
+      head.appendChild(el('span', 'sub', tiles.length === 0 ? 'went out'
+        : (tiles.length === 1 ? '1 tile' : tiles.length + ' tiles') + ' \u00b7 '
+          + (pips === 1 ? '1 pip' : pips + ' pips')));
+      who.appendChild(head);
+      var row = el('div', 'revealtiles');
+      tiles.forEach(function (id) {
+        var t = D.parseTile(id);
+        row.appendChild(tileNode(t.low, t.high, true, 'shown'));
+      });
+      who.appendChild(row);
+      wrap.appendChild(who);
+    }
+    return wrap;
+  }
+
   /* What stands in for the turn badge once the round is over: the badge
      would otherwise still be naming whoever was on turn when it ended. */
   function renderResultBar() {
@@ -467,12 +499,28 @@
 
   var TILE_SHORT = 39, TILE_LONG = 76, TILE_GAP = 3;
 
-  /** Shrink tiles as the chain grows so the whole board keeps fitting. */
-  function chainScale(count) {
-    if (count <= 8) return 1;
-    if (count <= 14) return 0.84;
-    if (count <= 20) return 0.7;
-    return 0.58;
+  /*
+   * How much room the board actually has, measured from the table after the
+   * last render. The alternative is to guess from the window, which has to
+   * assume how tall everything else is — and the guess was capped well below
+   * what a desktop window offers, so a long chain came out shrunk with half
+   * the screen standing empty. Measuring settles in one extra pass and
+   * cannot oscillate: the board's size has no say in the table's.
+   */
+  var boardRoom = null;
+  var measuring = false;
+
+  function measureBoardRoom() {
+    if (measuring) return;
+    var table = document.querySelector('.table');
+    if (!table) { boardRoom = null; return; }
+    var st = getComputedStyle(table);
+    var w = Math.max(160, table.clientWidth - parseFloat(st.paddingLeft) - parseFloat(st.paddingRight) - 32);
+    var h = Math.max(150, table.clientHeight - parseFloat(st.paddingTop) - parseFloat(st.paddingBottom));
+    if (boardRoom && Math.abs(boardRoom.w - w) < 2 && Math.abs(boardRoom.h - h) < 2) return;
+    boardRoom = { w: w, h: h };
+    measuring = true;
+    try { render(); } finally { measuring = false; }
   }
 
 
@@ -721,12 +769,13 @@
     });
     var unitsW = Math.max(maxX - minX, 1), unitsH = Math.max(maxY - minY, 1);
 
-    var roomW = Math.max(160, Math.min(window.innerWidth, 920) - 28);
-    var roomH = Math.max(150, Math.min(430, window.innerHeight - 380));
+    var roomW = boardRoom ? boardRoom.w : Math.max(160, Math.min(window.innerWidth, 920) - 28);
+    var roomH = boardRoom ? boardRoom.h : Math.max(150, Math.min(430, window.innerHeight - 380));
     // A tile is SHORT (2) units across, so a unit is half its short side.
+    // Never above 1: a tile has a natural size and blowing it up past that
+    // looks like a mistake. Below that, as large as the room allows.
     var base = TILE_SHORT / 2;
-    var scale = Math.min(chainScale(board.length),
-      roomW / (unitsW * base), roomH / (unitsH * base));
+    var scale = Math.min(1, roomW / (unitsW * base), roomH / (unitsH * base));
     var unit = base * scale;
     chain.style.setProperty('--tile-scale', String(scale));
 
@@ -1020,6 +1069,38 @@
     return ov;
   }
 
+  /*
+   * What everyone was left holding. Only once the round is over — it fills
+   * the room under the board and settles the two arguments that always
+   * follow a hand: who was stuck, and whether the pips add up.
+   */
+  function renderRevealed() {
+    var phase = S.match.phase;
+    if (phase !== 'roundOver' && phase !== 'matchOver') return null;
+    var hands = round() ? round().hands : null;
+    if (!hands) return null;
+    var wrap = el('div', 'revealed');
+    for (var seat = 0; seat < 4; seat++) {
+      var tiles = hands[seat] || [];
+      var who = el('div', 'revealseat ' + teamCls(seat));
+      var head = el('div', 'revealname');
+      head.appendChild(el('span', null, S.names[seat] || 'Seat ' + (seat + 1)));
+      var pips = tiles.reduce(function (sum, id) { return sum + D.tilePips(id); }, 0);
+      head.appendChild(el('span', 'sub', tiles.length === 0 ? 'went out'
+        : (tiles.length === 1 ? '1 tile' : tiles.length + ' tiles') + ' \u00b7 '
+          + (pips === 1 ? '1 pip' : pips + ' pips')));
+      who.appendChild(head);
+      var row = el('div', 'revealtiles');
+      tiles.forEach(function (id) {
+        var t = D.parseTile(id);
+        row.appendChild(tileNode(t.low, t.high, true, 'shown'));
+      });
+      who.appendChild(row);
+      wrap.appendChild(who);
+    }
+    return wrap;
+  }
+
   /* What stands in for the turn badge once the round is over: the badge
      would otherwise still be naming whoever was on turn when it ended. */
   function renderResultBar() {
@@ -1051,6 +1132,9 @@
         try { again.setSelectionRange(keep.start, keep.end); } catch (e) { /* some types refuse */ }
       }
     }
+    // The table is on the page now, so its real size can be taken and the
+    // board laid out to fill it. At most one more pass.
+    measureBoardRoom();
   }
 
   function renderInto() {
@@ -1062,6 +1146,8 @@
     root.appendChild(renderOpps());
     root.appendChild(renderTable());
     var over = S.match.phase === 'roundOver' || S.match.phase === 'matchOver';
+    var revealed = renderRevealed();
+    if (revealed) root.appendChild(revealed);
     root.appendChild(over ? renderResultBar() : renderStatus());
     root.appendChild(renderHand());
 

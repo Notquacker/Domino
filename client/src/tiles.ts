@@ -80,6 +80,18 @@ export function handTile(id: TileId, state: 'playable' | 'dead' | 'sel'): HTMLEl
   return node;
 }
 
+/**
+ * A tile shown face up outside anyone's hand — what a player was left
+ * holding, once the round is over and it is nobody's secret.
+ */
+export function shownTile(id: TileId): HTMLElement {
+  const t = parseTile(id);
+  const node = tile(t.low, t.high, true, 'shown');
+  node.dataset['tile'] = id;
+  node.setAttribute('aria-label', `${t.low} ${t.high}`);
+  return node;
+}
+
 /** Face-down placeholders for an opponent's hand. */
 export function tileBacks(count: number): HTMLElement {
   const wrap = el('div', 'backs');

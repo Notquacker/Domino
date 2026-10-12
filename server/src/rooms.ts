@@ -767,6 +767,12 @@ export class Room {
       scores: match?.scores ?? [0, 0],
       roundNumber: match?.roundNumber ?? 0,
       youMayMove: canAct,
+      // Only once the round is over. While it is being played this stays
+      // null, and every hand but your own stays the server's business.
+      reveal:
+        round !== null && (match?.phase === 'roundOver' || match?.phase === 'matchOver')
+          ? SEATS.map((s) => [...(round.hands[s] ?? [])])
+          : null,
       lastResult: match?.lastResult ?? null,
       winner: match?.winner ?? null,
       drawn: match?.drawn ?? false,

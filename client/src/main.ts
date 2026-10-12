@@ -29,6 +29,7 @@ import {
   openerIndexOf,
   slotsFor,
   teamOf,
+  tilePips,
 } from '@domino/shared';
 import { Net } from './net.js';
 import {
@@ -41,7 +42,7 @@ import {
   ensureSession,
   fetchStats,
 } from './auth.js';
-import { boardTile, el, handTile, tileBacks } from './tiles.js';
+import { boardTile, el, handTile, shownTile, tileBacks } from './tiles.js';
 
 const root = document.getElementById('app') as HTMLElement;
 
@@ -1457,17 +1458,6 @@ function renderOpponents(v: PlayerView): HTMLElement {
 const TILE_SHORT = 40;
 const TILE_GAP = 3;
 
-/**
- * Shrink the tiles as the chain grows so the whole board keeps fitting on
- * screen. Twenty-eight full-size tiles would be several screens wide.
- */
-function chainScale(count: number): number {
-  if (count <= 8) return 1;
-  if (count <= 14) return 0.84;
-  if (count <= 20) return 0.72;
-  return 0.6;
-}
-
 
 /**
  * The stand-in used to work out how much room to keep around the board.
@@ -1476,6 +1466,47 @@ function chainScale(count: number): number {
  * matter, never which tile it is or who holds it.
  */
 const ROOM_FOR: TileId = '0-1';
+
+/**
+ * How much room the board actually has, measured from the table after the
+ * last render.
+ *
+ * The alternative is to guess from the window, which has to assume how tall
+ * everything else is — and the guess was capped well below what a desktop
+ * window offers, so a long chain came out shrunk to a third of its size with
+ * half the screen standing empty. Measuring settles in one extra pass and
+ * cannot oscillate: the board's size has no say in the table's.
+ */
+let boardRoom: { w: number; h: number } | null = null;
+let measuring = false;
+
+function measureBoardRoom(): void {
+  if (measuring) return;
+  const table = document.querySelector('.table');
+  if (table === null) {
+    boardRoom = null;
+    return;
+  }
+  const style = getComputedStyle(table);
+  const w = Math.max(
+    160,
+    table.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 28,
+  );
+  const h = Math.max(
+    150,
+    table.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+  );
+  if (boardRoom !== null && Math.abs(boardRoom.w - w) < 2 && Math.abs(boardRoom.h - h) < 2) {
+    return;
+  }
+  boardRoom = { w, h };
+  measuring = true;
+  try {
+    render();
+  } finally {
+    measuring = false;
+  }
+}
 
 /*
  * Zooming.
@@ -1624,9 +1655,14 @@ function renderTable(v: PlayerView): HTMLElement {
   const aiming = dragTile ?? selected;
   const slots = aiming === null ? [] : slotsFor(tiles, openerAt, aiming);
 
-  // Shrink until the chain — and anywhere the held tile could go — fits.
-  const roomW = Math.max(160, Math.min(window.innerWidth, 920) - 28);
-  const roomH = Math.max(150, Math.min(430, window.innerHeight - 380));
+  // Shrink until the chain — and anywhere the held tile could go — fits the
+  // room there actually is. `boardRoom` is the table measured after the last
+  // render; the guess from the window is only for the very first one, before
+  // there is anything to measure. Guessing every time is what left a long
+  // chain shrunk to a third of its size on a desktop with half the screen
+  // standing empty.
+  const roomW = boardRoom?.w ?? Math.max(160, Math.min(window.innerWidth, 920) - 28);
+  const roomH = boardRoom?.h ?? Math.max(150, Math.min(430, window.innerHeight - 380));
   const plan = layoutBoard(tiles, openerAt);
 
   // A spot can sit outside the tiles already down, so the frame has to cover
@@ -1653,9 +1689,10 @@ function renderTable(v: PlayerView): HTMLElement {
   const unitsH = Math.max(maxY - minY, 1);
 
   // A tile is SHORT (2) units across, so a unit is half a tile's short side.
+  // Never above 1: a tile has a natural size and blowing it up past that
+  // looks like a mistake. Below that, as large as the room allows.
   const base = TILE_SHORT / 2;
-  let scale = chainScale(v.board.length);
-  scale = Math.min(scale, roomW / (unitsW * base), roomH / (unitsH * base));
+  const scale = Math.min(1, roomW / (unitsW * base), roomH / (unitsH * base));
   const unit = base * scale;
   chain.style.setProperty('--tile-scale', String(scale));
 
@@ -2265,6 +2302,50 @@ function renderOverlay(v: PlayerView): HTMLElement | null {
 }
 
 /**
+ * What everyone was left holding.
+ *
+ * Only there once the round is over — until then the server has not sent it,
+ * and it is none of your business. It fills the room under the board, which
+ * is where everyone is looking anyway, and settles the two arguments that
+ * always follow a hand: who was stuck, and whether the pips add up.
+ */
+function pipWord(pips: number): string {
+  return pips === 1 ? '1 pip' : `${pips} pips`;
+}
+
+function renderRevealed(v: PlayerView): HTMLElement | null {
+  const reveal = v.reveal;
+  if (reveal === null) return null;
+  const base = v.you ?? 0;
+
+  const wrap = el('div', 'revealed');
+  for (let i = 1; i <= 3; i++) {
+    const seat = ((base + i) % 4) as Seat;
+    const tiles = reveal[seat] ?? [];
+    const who = el('div', `revealseat ${teamClass(seat)}`);
+    const head = el('div', 'revealname');
+    head.appendChild(el('span', undefined, v.seats[seat]?.name ?? `Seat ${seat + 1}`));
+    head.appendChild(
+      el(
+        'span',
+        'sub',
+        tiles.length === 0
+          ? 'went out'
+          : `${tiles.length === 1 ? '1 tile' : `${tiles.length} tiles`} · ${pipWord(
+              tiles.reduce((sum, id) => sum + tilePips(id), 0),
+            )}`,
+      ),
+    );
+    who.appendChild(head);
+    const row = el('div', 'revealtiles');
+    for (const id of tiles) row.appendChild(shownTile(id));
+    who.appendChild(row);
+    wrap.appendChild(who);
+  }
+  return wrap;
+}
+
+/**
  * What stands in for the turn badge once the round is over.
  *
  * The badge below the board would otherwise still be naming whoever was on
@@ -2297,6 +2378,8 @@ function renderGame(v: PlayerView): HTMLElement {
   wrap.appendChild(renderOpponents(v));
   wrap.appendChild(renderTable(v));
   const over = v.phase === 'roundOver' || v.phase === 'matchOver';
+  const revealed = renderRevealed(v);
+  if (revealed !== null) wrap.appendChild(revealed);
   wrap.appendChild(over ? renderResultBar(v) : renderStatus(v));
   if (error) {
     const box = el('div', 'err', error);
@@ -2359,6 +2442,10 @@ function render(): void {
       }
     }
   }
+  // The table is on the page now, so its real size can be taken and the
+  // board laid out to fill it. At most one more pass: the second render
+  // measures the same table and stops.
+  measureBoardRoom();
   tickClock();
 }
 

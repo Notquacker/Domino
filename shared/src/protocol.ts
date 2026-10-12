@@ -53,6 +53,17 @@ export interface PlayerView {
    * hand it over. Attempt a move and it is accepted or refused.
    */
   readonly youMayMove: boolean;
+  /**
+   * What every seat was left holding, once the round is over — by seat, your
+   * own included. Null while a round is still being played.
+   *
+   * Dominoes is a hidden-information game and the server never sends another
+   * player's tiles during play; an end-to-end test holds it to that. Once the
+   * round has finished they are not secret any more — counting them is how
+   * the round is settled — and seeing who was stuck with what is half of
+   * talking about the hand afterwards.
+   */
+  readonly reveal: readonly (readonly TileId[])[] | null;
   readonly lastResult: RoundResult | null;
   readonly winner: Team | null;
   /** True when the match finished level on the drawn line. */

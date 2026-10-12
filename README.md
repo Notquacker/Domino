@@ -24,8 +24,12 @@ Curaçao-style partnership dominoes:
   where there is nothing to choose between, the whole table is one target.
 - **The table stays up after the round.** The result sheet has a "Look at
   the table" button: put it aside and the board is exactly as it was left,
-  zoom and all, with the result a tap away again. How a hand finished and
-  what the last tile was is most of the conversation afterwards.
+  zoom and all, with the result a tap away again — and under it, what every
+  player was still holding, with their pip counts. How a hand finished, who
+  was stuck and whether the pips add up is most of the conversation
+  afterwards. Those hands are sent only once the round is settled; during
+  play the server never sends anyone another player's tiles, and two
+  end-to-end tests hold it to that.
 - **Passing is a choice.** You may pass at any time, even holding a playable
   tile. But a pass made on a tile you could have played **loses your team the
   whole round** — you score nothing, even if you went out first, and the other
@@ -415,7 +419,9 @@ number of pips — the tile is drawn from whichever side meets its neighbour.
 Tiles turn with each corner and doubles lie across the run, which falls out of
 a single rule: a tile lies across its run, a double along it, and turning the
 chain swaps both. Tiles shrink as the chain grows, so the whole board stays on
-screen without scrolling.
+screen without scrolling — fitted to the room the table actually has,
+measured after each render rather than guessed from the window, so a long
+chain on a big screen comes out full size instead of shrunk into a corner.
 
 The board keeps room around itself for the spots a tile could go, whether or
 not one is in hand, so picking a tile up never moves or resizes the table

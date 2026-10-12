@@ -21,7 +21,9 @@ const browser = await chromium.launch({
   executablePath:
     process.env['CHROMIUM'] ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
 });
-const page = await browser.newPage({ viewport: { width: 412, height: 900 } });
+// A tall window on purpose: that is where a board laid out to a guessed
+// height instead of the real one leaves most of the screen standing empty.
+const page = await browser.newPage({ viewport: { width: 760, height: 1080 } });
 page.on('pageerror', (e) => problems.push(`page error: ${e.message}`));
 
 await page.goto(BASE);
@@ -86,6 +88,75 @@ if ((await sheet()) === 0) {
     // Nothing on the board may be hidden behind an overlay.
     const covered = await page.evaluate(() => document.querySelector('.overlay') !== null);
     if (covered) problems.push('something is still laid over the table');
+
+    // What everyone was left holding. Hidden all through the round; shown
+    // once it is settled, because counting them is how the score is made.
+    const held = await page.evaluate(() =>
+      [...document.querySelectorAll('.revealseat')].map((c) => ({
+        who: c.querySelector('.revealname span')?.textContent ?? '',
+        tiles: c.querySelectorAll('.revealtiles .tile').length,
+        says: c.querySelector('.revealname .sub')?.textContent ?? '',
+      })),
+    );
+    if (held.length < 3) {
+      problems.push(`only ${held.length} players' tiles are shown, expected at least three`);
+    } else {
+      console.log(
+        'shown: ' + held.map((h) => `${h.who} (${h.says})`).join(', '),
+      );
+      for (const h of held) {
+        if (h.who === '') problems.push('a revealed hand has no name on it');
+        const says = /^(\d+) tiles?/.exec(h.says);
+        const claimed = says === null ? 0 : Number(says[1]);
+        if (claimed !== h.tiles) {
+          problems.push(`${h.who} is said to hold ${claimed} tiles but ${h.tiles} are drawn`);
+        }
+      }
+    }
+
+    // And the board should be using the room it has, not a fraction of it.
+    const fill = await page.evaluate(() => {
+      const table = document.querySelector('.table');
+      const tiles = [...document.querySelectorAll('.pitch .tile')];
+      if (table === null || tiles.length === 0) return null;
+      const v = table.getBoundingClientRect();
+      let shortSide = 0;
+      let left = Infinity;
+      let right = -Infinity;
+      let top = Infinity;
+      let bottom = -Infinity;
+      for (const t of tiles) {
+        const r = t.getBoundingClientRect();
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+        top = Math.min(top, r.top);
+        bottom = Math.max(bottom, r.bottom);
+        // A tile's short side, which is what "full size" means: they are
+        // all at the same scale, so the largest is the scale.
+        shortSide = Math.max(shortSide, Math.min(r.width, r.height));
+      }
+      return {
+        across: (right - left) / v.width,
+        down: (bottom - top) / v.height,
+        shortest: Math.round(shortSide),
+      };
+    });
+    if (fill === null) {
+      problems.push('could not measure how much of the table the board uses');
+    } else {
+      const uses = Math.round(Math.max(fill.across, fill.down) * 100);
+      console.log(`the board fills ${uses}% of the table, tiles ${fill.shortest}px across`);
+      // Either it has grown until one side of it meets the edge of the
+      // room, or the tiles are already at their natural size and it has no
+      // reason to grow further. Anything else is a board laid out to a
+      // guess rather than to the space it has.
+      if (uses < 85 && fill.shortest < 38) {
+        problems.push(
+          `the board uses only ${uses}% of the table and its tiles are ${fill.shortest}px across, ` +
+            'short of the 40 they could be',
+        );
+      }
+    }
 
     const back = page.getByRole('button', { name: 'Show the result' });
     if ((await back.count()) === 0) {

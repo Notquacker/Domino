@@ -318,6 +318,13 @@ describe('a full four-player match over the wire', () => {
             assert.ok(mine.has(tile), `player ${parsed.view.you} was sent a foreign tile ${tile}`);
           }
         }
+        // Everyone else's tiles are the server's business until the round
+        // is settled. Only then does `reveal` carry them.
+        assert.equal(
+          parsed.view.reveal,
+          null,
+          'a view sent mid-round carried everyone\u2019s tiles',
+        );
       }
     }
   });
@@ -583,6 +590,105 @@ describe('catching a false pass across four connections', () => {
       assert.equal(client.view!.lastResult!.kind, 'calledOut');
       client.close();
     }
+  });
+});
+
+/** Wait for something to become true, by looking rather than by listening. */
+async function settle(test: () => boolean, ms = 20_000): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (test()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return false;
+}
+
+/** What everyone was holding, once the round is settled. */
+describe('showing the hands when the round is over', () => {
+  const me = new TestClient('rev');
+
+  after(() => {
+    me.close();
+  });
+
+  it('keeps every hand to itself until the round ends, then shows them all', async () => {
+    // Three computer players so the round plays itself out; only our own
+    // turns need driving, and only our own view needs watching — which is
+    // the view the guarantee is about.
+    await me.open();
+    me.send({
+      t: 'create',
+      name: 'Rev',
+      rules: { scoring: 'rounds', targetScore: 3, turnSeconds: null },
+    });
+    await me.until(() => me.view !== null, 'the table to open');
+    for (let i = 0; i < 3; i++) {
+      me.send({ t: 'addBot' });
+      await me.until(() => me.view!.seats.filter((s) => s !== null).length === i + 2, 'a bot');
+    }
+    me.send({ t: 'start' });
+    await me.until(() => me.view!.phase === 'playing', 'the deal');
+
+    const dealt = [...me.view!.hand];
+    let sawPlaying = 0;
+
+    for (let go = 0; go < 400 && me.view!.phase === 'playing'; go++) {
+      if (me.view!.phase === 'playing') {
+        sawPlaying++;
+        assert.equal(me.view!.reveal, null, 'the hands were shown while the round was still on');
+      }
+      if (!(await settle(() => me.view!.youMayMove || me.view!.phase !== 'playing', 20_000))) break;
+      if (me.view!.phase !== 'playing') break;
+
+      let moved = false;
+      for (const tile of [...me.view!.hand]) {
+        for (const end of ['right', 'left'] as const) {
+          if (moved) continue;
+          const was = me.view!.board.length;
+          me.errors = [];
+          me.send({ t: 'move', move: { kind: 'play', tile, end } });
+          await settle(() => me.view!.board.length > was || me.errors.length > 0, 5_000);
+          if (me.errors.length === 0) moved = true;
+        }
+      }
+      if (!moved) {
+        me.errors = [];
+        me.send({ t: 'move', move: { kind: 'pass' } });
+        // A pass is refused on the opening lead, where somebody must play.
+        // That is an answer too, so take it and move on rather than waiting.
+        await settle(() => !me.view!.youMayMove || me.errors.length > 0, 5_000);
+        if (me.errors.length > 0) break;
+      }
+    }
+
+    assert.ok(sawPlaying > 4, `the round barely ran: ${sawPlaying} turns watched`);
+    assert.ok(await settle(() => me.view!.phase !== 'playing'), 'the round should have finished');
+
+    // Now every seat's tiles are there, and they add up: what is left in the
+    // four hands plus what is on the table is the whole set, with nothing
+    // counted twice.
+    const reveal = me.view!.reveal;
+    assert.ok(reveal !== null, 'the hands were not shown after the round');
+    assert.equal(reveal.length, 4, 'every seat should be accounted for');
+
+    const mine = reveal[me.view!.you!] ?? [];
+    assert.deepEqual([...mine].sort(), [...me.view!.hand].sort(), 'our own hand came back wrong');
+    for (const tile of mine) {
+      assert.ok(dealt.includes(tile), `we were never dealt ${tile}`);
+    }
+
+    const seen = new Set<string>();
+    for (const hand of reveal) {
+      for (const tile of hand) {
+        assert.ok(!seen.has(tile), `${tile} is in two hands at once`);
+        seen.add(tile);
+      }
+    }
+    for (const laid of me.view!.board) {
+      assert.ok(!seen.has(laid.id), `${laid.id} is both on the table and in a hand`);
+      seen.add(laid.id);
+    }
+    assert.equal(seen.size, 28, 'the tiles on the table and in the hands should be the whole set');
   });
 });
 

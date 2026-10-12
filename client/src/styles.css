@@ -313,6 +313,39 @@ input::placeholder { color: var(--muted); }
 .chain .empty-table { color: var(--muted); font-size: 14px; text-align: center; }
 
 
+/* ---------------- what everyone was left holding ---------------- */
+
+/*
+ * Only on screen once the round is over. It sits under the board, in the
+ * room that is standing empty by then anyway, and settles the two arguments
+ * that always follow a hand: who was stuck, and whether the pips add up.
+ */
+.revealed {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+  padding: 6px 14px 0;
+}
+.revealseat {
+  flex: 0 1 auto; min-width: 0;
+  padding: 7px 9px; border-radius: 10px;
+  background: #0000002e; border: 1px solid #ffffff14;
+}
+.revealseat.teamA { border-left: 3px solid var(--teamA); }
+.revealseat.teamB { border-left: 3px solid var(--teamB); }
+.revealname {
+  display: flex; align-items: baseline; gap: 7px;
+  font-size: 12.5px; font-weight: 700; margin-bottom: 5px;
+}
+.revealname .sub { font-weight: 400; font-size: 11px; color: var(--muted); }
+.revealtiles { display: flex; gap: 4px; }
+/* Small, but the pips still have to be countable — that is the whole point. */
+.tile.shown {
+  width: 26px; height: 52px;
+  display: grid; grid-template-rows: 1fr 1fr;
+  padding: 2px; gap: 2px;
+}
+.tile.shown .half + .half { border-top: 1px solid #00000030; }
+.tile.shown .pip { max-width: 4px; }
+
 /* ---------------- whose turn it is ---------------- */
 
 .status { text-align: center; padding: 6px 14px 8px; font-size: 14px; }
